@@ -242,7 +242,13 @@ const handleEvent = (state: IsolateState, event: WorkerEvent): void => {
   }
 };
 
-export const createIsolate = async (
+/**
+ * Worker-backed {@link Isolate}. The original v0 implementation; one Bun
+ * Worker per Isolate, all comms through `postMessage`. Public
+ * {@link createIsolate} picks this when the user passes `backend: 'worker'`
+ * or when libJSC isn't reachable.
+ */
+export const createIsolateWorker = async (
   options: IsolateOptions = {},
 ): Promise<Isolate> => {
   const memoryLimit = options.memoryLimit ?? 256;
@@ -515,4 +521,53 @@ const makeScript = (
 
     dispose,
   };
+};
+
+/**
+ * Create an {@link Isolate}. Picks a backend based on `options.backend`
+ * (default: `"auto"` — FFI if libJSC is reachable, Worker otherwise).
+ *
+ * The FFI backend (when reachable):
+ * - Cold heap ~300 KB vs ~46 MB on the Worker backend.
+ * - Closes the two T2 documented residuals (`(0, eval)('Bun')`, `new Function(...)`).
+ * - Interrupt-driven timeouts that keep the isolate alive afterwards.
+ * - libJavaScriptCore via `bun:ffi` — no Worker, no message-passing overhead.
+ *
+ * The Worker backend stays the only supported path on Windows, on Linux
+ * machines without `libjavascriptcoregtk` installed, and any time the user
+ * pins `backend: 'worker'` explicitly.
+ */
+export const createIsolate = async (
+  options: IsolateOptions = {},
+): Promise<Isolate> => {
+  // Order: explicit option > env var > "auto". The env var
+  // (`ISOLATED_JSC_BACKEND`) is useful for pinning the backend in test
+  // suites and for ops scripts that need consistent behaviour across
+  // machines with / without libJSC installed.
+  const envBackend = process.env.ISOLATED_JSC_BACKEND as
+    | "auto"
+    | "ffi"
+    | "worker"
+    | undefined;
+  const backend =
+    options.backend ??
+    (envBackend === "auto" || envBackend === "ffi" || envBackend === "worker"
+      ? envBackend
+      : "auto");
+
+  if (backend === "worker") {
+    return createIsolateWorker(options);
+  }
+
+  // Both "ffi" and "auto" try FFI first. Dynamic import so non-Bun runtimes
+  // (or environments where `bun:ffi` would crash on load) can still use
+  // the Worker backend without crashing at module load.
+  try {
+    const { createIsolateFfi } = await import("./ffi/backend");
+    return await createIsolateFfi(options);
+  } catch (error) {
+    if (backend === "ffi") throw error;
+    // "auto": silently fall back to Worker.
+    return createIsolateWorker(options);
+  }
 };
