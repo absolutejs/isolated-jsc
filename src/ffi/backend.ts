@@ -30,6 +30,7 @@ import {
   type Pointer,
 } from "bun:ffi";
 import {
+  type Callable,
   CompileError,
   type Context,
   type CreateContextOptions,
@@ -88,9 +89,15 @@ type IsolateFfiState = {
   /** JSCallbacks for each Reference's `callAsFunction` — kept alive for the
    * isolate's lifetime; closed on dispose to free the C-side thunks. */
   referenceCallbacks: JSCallback[];
+  /** Callables: precompiled function expressions bound to a context.
+   * Each entry holds the JSValueRef of the function (protected via
+   * `JSValueProtect` so it survives across calls). Per-call invocation
+   * goes through `JSObjectCallAsFunction` — no eval, no setGlobal. */
+  callables: Map<number, { ctx: bigint; fnValue: bigint }>;
   nextContextId: number;
   nextScriptId: number;
   nextRefId: number;
+  nextCallableId: number;
   disposed: boolean;
   options: Required<Pick<IsolateOptions, "memoryLimit">>;
   memoryLimitBytes: number;
@@ -301,9 +308,11 @@ export const createIsolateFfi = async (
     scripts: new Map(),
     refs: new Map(),
     referenceCallbacks: [],
+    callables: new Map(),
     nextContextId: 1,
     nextScriptId: 1,
     nextRefId: 1,
+    nextCallableId: 1,
     disposed: false,
     options: { memoryLimit },
     memoryLimitBytes: memoryLimit * 1024 * 1024,
@@ -432,6 +441,13 @@ export const createIsolateFfi = async (
       // Clear the execution time limit so JSC doesn't keep the watchdog
       // running against a freed callback.
       symbols.JSContextGroupClearExecutionTimeLimit(group);
+      // Unprotect every callable's function value so the heap can be
+      // reclaimed. Safe to do before context release; JSValueUnprotect
+      // just decrements the protection count.
+      for (const callable of state.callables.values()) {
+        symbols.JSValueUnprotect(callable.ctx, callable.fnValue);
+      }
+      state.callables.clear();
       for (const ctx of state.contexts.values()) {
         symbols.JSGlobalContextRelease(ctx);
       }
@@ -466,6 +482,44 @@ const makeFfiContext = (
 
   const context: Context = {
     isolate,
+
+    async compileCallable(source: string): Promise<Callable> {
+      const ctx = state.contexts.get(contextId);
+      if (ctx === undefined) throw new IsolateDisposedError();
+      // Evaluate the source as a function expression. The wrapping
+      // arrow forces the source into expression position (so a `function
+      // (){}` declaration becomes a function value, not a declaration)
+      // and asserts it actually evaluates to a function. SyntaxErrors
+      // and the "not a function" TypeError both get wrapped as
+      // CompileError so callers can branch on compile-time issues.
+      let fnValue: bigint;
+      try {
+        fnValue = evalAndCheck(
+          state,
+          ctx,
+          `((__src) => { if (typeof __src !== 'function') { throw new TypeError('compileCallable source must evaluate to a function; got ' + typeof __src); } return __src; })(${source})`,
+          "<compileCallable>",
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === "SyntaxError" ||
+            error.name === "TypeError" ||
+            error.message.includes("SyntaxError") ||
+            error.message.includes("must evaluate to a function"))
+        ) {
+          throw new CompileError(error.message, source);
+        }
+        throw error;
+      }
+      // Protect the JSValueRef so JSC's GC keeps it alive until we
+      // explicitly unprotect on dispose. Without this, the function
+      // would be collected after the eval frame returned.
+      symbols.JSValueProtect(ctx, fnValue);
+      const callableId = state.nextCallableId++;
+      state.callables.set(callableId, { ctx, fnValue });
+      return makeFfiCallable(state, context, callableId);
+    },
 
     async setGlobal(name: string, value: unknown): Promise<void> {
       const ctx = state.contexts.get(contextId);
@@ -558,12 +612,139 @@ const makeFfiContext = (
     async dispose(): Promise<void> {
       const ctx = state.contexts.get(contextId);
       if (ctx === undefined) return;
+      // Unprotect every callable bound to this context — the underlying
+      // JSGlobalContextRelease would invalidate them anyway, but
+      // unprotecting explicitly lets us drop the callables map entry
+      // cleanly so a later dispose() doesn't try to unprotect a freed
+      // context.
+      for (const [callableId, callable] of state.callables) {
+        if (callable.ctx === ctx) {
+          symbols.JSValueUnprotect(ctx, callable.fnValue);
+          state.callables.delete(callableId);
+        }
+      }
       state.contexts.delete(contextId);
       symbols.JSGlobalContextRelease(ctx);
     },
   };
   contextIdBrand.set(context, contextId);
   return context;
+};
+
+/**
+ * Per-call invocation for a {@link Callable}. Packs the args (handling
+ * References, ExternalCopies, and plain values) into a JSValueRef array,
+ * sets the per-call execution time limit, calls
+ * `JSObjectCallAsFunction(fn, thisObj=null, argc, argv, exception)`, and
+ * unwraps any returned Promise via the existing pump loop.
+ *
+ * No per-call eval, no per-call `setGlobal`. The function value itself
+ * was compiled (and `JSValueProtect`ed) once at `compileCallable` time.
+ */
+const makeFfiCallable = (
+  state: IsolateFfiState,
+  context: Context,
+  callableId: number,
+): Callable => {
+  const runRaw = async (
+    args: unknown[],
+    options: RunOptions,
+  ): Promise<{ value: unknown; cpuMs: number; heapBytes: number }> => {
+    const slot = state.callables.get(callableId);
+    if (slot === undefined) {
+      throw new Error(`unknown callable ${callableId}; was it disposed?`);
+    }
+    const { ctx, fnValue } = slot;
+    if (state.contexts.get(contextIdOf(context)) === undefined) {
+      throw new IsolateDisposedError();
+    }
+    const s = state.symbols;
+
+    const timeoutMs = options.timeout ?? 1000;
+    s.JSContextGroupSetExecutionTimeLimit(
+      state.group,
+      timeoutMs / 1000,
+      BigInt(state.watchdogCallback?.ptr ?? 0),
+      0n,
+    );
+
+    // Pack args. References become JSObjectMakeFunctionWithCallback
+    // wrappers (same path as setGlobal for References); ExternalCopies
+    // unwrap their inner value; everything else goes through hostToJs.
+    const argRefs = new BigUint64Array(args.length);
+    for (let i = 0; i < args.length; i += 1) {
+      const a = args[i];
+      if (a instanceof Reference) {
+        argRefs[i] = makeReferenceFunction(state, ctx, a);
+      } else if (a instanceof ExternalCopy) {
+        argRefs[i] = hostToJs(s, ctx, a.value);
+      } else {
+        argRefs[i] = hostToJs(s, ctx, a);
+      }
+    }
+
+    const excOut = new BigUint64Array(1);
+    const startedAt = performance.now();
+    const result = s.JSObjectCallAsFunction(
+      ctx,
+      fnValue,
+      0n, // thisObject = null
+      BigInt(args.length),
+      args.length === 0 ? 0n : BigInt(ptr(argRefs)),
+      BigInt(ptr(excOut)),
+    );
+
+    // Exception handling mirrors evalAndCheck (line ~268). If excOut is
+    // non-zero, the call threw — re-throw the JS error on the host side.
+    if (excOut[0] !== 0n) {
+      if (state.memoryOverage) {
+        state.memoryOverage = false;
+        throw new MemoryLimitError(
+          state.options.memoryLimit,
+          state.lastMemorySnapshot,
+        );
+      }
+      const error = errorFromJsValue(s, ctx, excOut[0]!);
+      if (
+        error.name === "Error" &&
+        typeof error.message === "string" &&
+        error.message.includes("execution terminated")
+      ) {
+        throw new TimeoutError(timeoutMs);
+      }
+      throw error;
+    }
+
+    const value = await unwrapResultPromise(state, ctx, result, timeoutMs);
+    const cpuMs = performance.now() - startedAt;
+    const heapBytes = await context.isolate.heapSizeBytes();
+    return { cpuMs, heapBytes, value };
+  };
+
+  const callable: Callable = {
+    context,
+    async call(args: unknown[], options: RunOptions = {}): Promise<unknown> {
+      const { value } = await runRaw(args, options);
+      return value;
+    },
+    async callWithMetrics(
+      args: unknown[],
+      options: RunOptions = {},
+    ): Promise<RunWithMetricsResult> {
+      const { value, cpuMs, heapBytes } = await runRaw(args, options);
+      return {
+        metrics: { cpuMs: Math.round(cpuMs), heapBytes },
+        result: value,
+      };
+    },
+    async dispose(): Promise<void> {
+      const slot = state.callables.get(callableId);
+      if (slot === undefined) return;
+      state.symbols.JSValueUnprotect(slot.ctx, slot.fnValue);
+      state.callables.delete(callableId);
+    },
+  };
+  return callable;
 };
 
 /**

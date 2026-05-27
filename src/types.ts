@@ -186,6 +186,27 @@ export type CreateContextOptions = {
 export type Context = {
   readonly isolate: Isolate;
   /**
+   * Compile a function expression in this context and return a {@link
+   * Callable}. `source` must evaluate to a function (arrow or `function`
+   * expression). Per-call cost is just one JSC `JSObjectCallAsFunction`
+   * (FFI backend) or one postMessage (Worker backend) — no per-call
+   * eval, no per-call `setGlobal`. Use this in preference to
+   * {@link Script} for the per-tenant / per-call dispatch shape: compile
+   * once at registration, call many times with different args.
+   *
+   * @example
+   * const fn = await ctx.compileCallable('(args, ctx) => args.n * 2');
+   * const result = await fn.call([{ n: 21 }, {}]);  // 42
+   *
+   * @example // Pass a Reference as an arg (host call-back, no global needed):
+   * const dispatch = new Reference((op, ...rest) => actions[op](...rest));
+   * const fn = await ctx.compileCallable(
+   *   '(args, dispatch) => dispatch("insert", "users", args)'
+   * );
+   * await fn.call([{ name: 'alex' }, dispatch]);
+   */
+  compileCallable: (source: string) => Promise<Callable>;
+  /**
    * Set a global on this context's `globalThis`. Value must be a primitive,
    * a {@link Reference}, or an {@link ExternalCopy} — naked host objects
    * will throw (they'd cross the heap boundary).
@@ -249,6 +270,41 @@ export type RunMetrics = {
 export type RunWithMetricsResult<T = unknown> = {
   result: T;
   metrics: RunMetrics;
+};
+
+/**
+ * A precompiled function bound to a specific {@link Context}. Use
+ * {@link Context.compileCallable} to create one. Per-call cost is one
+ * `JSObjectCallAsFunction` (FFI) or one postMessage (Worker) — no
+ * per-call eval, no per-call setGlobal.
+ *
+ * For the dispatch shape where you call the same handler many times
+ * with different args, this is much cheaper than re-evaluating a
+ * `Script` per call (which is essentially "ship args via setGlobal,
+ * eval the source"). For ad-hoc one-off scripts, prefer {@link Script}.
+ */
+export type Callable = {
+  readonly context: Context;
+  /**
+   * Call the precompiled function. `args` are passed in order as the
+   * function's positional parameters. Each may be a primitive, a
+   * {@link Reference} (installed inline as a callable on the JSC
+   * side — no global pollution), an {@link ExternalCopy}, or a plain
+   * structured-cloneable value. The return value is structure-cloned
+   * back; rejected Promises throw their rejection.
+   */
+  call: (args: unknown[], options?: RunOptions) => Promise<unknown>;
+  /**
+   * Same as {@link call} but resolves with `{ result, metrics }`.
+   * Failures still reject with the original error; metrics are only
+   * attached to successful calls.
+   */
+  callWithMetrics: (
+    args: unknown[],
+    options?: RunOptions,
+  ) => Promise<RunWithMetricsResult>;
+  /** Release the function reference. Idempotent. */
+  dispose: () => Promise<void>;
 };
 
 /** A compiled JS script that can be run inside a {@link Context}. */

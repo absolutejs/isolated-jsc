@@ -11,6 +11,7 @@
  */
 
 import {
+  type Callable,
   CompileError,
   type Context,
   type CreateContextOptions,
@@ -21,6 +22,7 @@ import {
   MemoryLimitError,
   Reference,
   type RunOptions,
+  type RunWithMetricsResult,
   type Script,
   TimeoutError,
 } from "./types";
@@ -382,6 +384,29 @@ const makeContext = (
   const context: Context = {
     isolate,
 
+    async compileCallable(source: string): Promise<Callable> {
+      const id = state.nextId++;
+      try {
+        await send<null>(state, {
+          id,
+          op: "compileCallable",
+          contextId,
+          source,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === "SyntaxError" ||
+            error.message.includes("SyntaxError") ||
+            error.name === "TypeError")
+        ) {
+          throw new CompileError(error.message, source);
+        }
+        throw error;
+      }
+      return makeCallable(state, context, id);
+    },
+
     async setGlobal(name: string, value: unknown): Promise<void> {
       const id = state.nextId++;
       await send<null>(state, {
@@ -516,6 +541,66 @@ const makeScript = (
       return {
         result: fromWire(result),
         metrics: metrics ?? { cpuMs: 0, heapBytes: 0 },
+      };
+    },
+
+    dispose,
+  };
+};
+
+const makeCallable = (
+  state: IsolateState,
+  context: Context,
+  callableId: number,
+): Callable => {
+  const dispose = async (): Promise<void> => {
+    if (state.disposed) return;
+    const id = state.nextId++;
+    await send<null>(state, { id, op: "disposeCallable", callableId });
+  };
+
+  return {
+    context,
+
+    async call(args: unknown[], options: RunOptions = {}): Promise<unknown> {
+      const timeoutMs = options.timeout ?? 1000;
+      const id = state.nextId++;
+      const wire = await raceWithTimeout<WireValue>(
+        state,
+        send(state, {
+          id,
+          op: "call",
+          callableId,
+          args: args.map((a) => toWire(state, a)),
+        }),
+        timeoutMs,
+      );
+      return fromWire(wire);
+    },
+
+    async callWithMetrics(
+      args: unknown[],
+      options: RunOptions = {},
+    ): Promise<RunWithMetricsResult> {
+      const timeoutMs = options.timeout ?? 1000;
+      const id = state.nextId++;
+      const { result, metrics } = await raceWithTimeout<{
+        result: WireValue;
+        metrics?: { cpuMs: number; heapBytes: number };
+      }>(
+        state,
+        sendWithMetrics(state, {
+          id,
+          op: "call",
+          callableId,
+          args: args.map((a) => toWire(state, a)),
+          withMetrics: true,
+        }),
+        timeoutMs,
+      );
+      return {
+        metrics: metrics ?? { cpuMs: 0, heapBytes: 0 },
+        result: fromWire(result),
       };
     },
 

@@ -54,6 +54,17 @@ type CompiledScript = (sandbox: Record<string, unknown>) => unknown;
 
 const contexts = new Map<number, Record<string, unknown>>();
 const scripts = new Map<number, CompiledScript>();
+/** Callables: precompiled function expressions bound to a context.
+ * Each entry holds the already-evaluated function value plus the
+ * contextId it was compiled against. Per-call cost is
+ * `fn.apply(undefined, args)`. When a context is disposed, all
+ * callables bound to it are cleared too (so the host-side `.call()`
+ * gets a clear "unknown callableId" error instead of silently
+ * running against orphan state). */
+const callables = new Map<
+  number,
+  { fn: (...args: unknown[]) => unknown; contextId: number }
+>();
 
 let nextCallId = 1;
 const pendingRefCalls = new Map<
@@ -399,6 +410,30 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           scripts.set(request.id, fn);
           return { id: request.id, ok: true, result: request.id };
         }
+        case "compileCallable": {
+          const sandbox = contexts.get(request.contextId);
+          if (sandbox === undefined)
+            throw new Error(`unknown contextId ${request.contextId}`);
+          // Evaluate the source as a function expression inside the
+          // sandbox's with-scope so the function's [[Scope]] captures
+          // the context's globals (console, Promise, user-set globals).
+          // Per-call invocation then runs against that scope.
+          const compiledExpr = new Function(
+            "sandbox",
+            `return (function () { with (this) { return eval(${JSON.stringify(`(${request.source})`)}); } }).call(sandbox);`,
+          );
+          const value = compiledExpr(sandbox);
+          if (typeof value !== "function") {
+            throw new TypeError(
+              `compileCallable source must evaluate to a function; got ${typeof value}`,
+            );
+          }
+          callables.set(request.id, {
+            contextId: request.contextId,
+            fn: value as (...args: unknown[]) => unknown,
+          });
+          return { id: request.id, ok: true, result: request.id };
+        }
         case "createContext": {
           const sandbox = newSandbox();
           // Restore snapshot first so seed code can read accumulated state.
@@ -489,12 +524,45 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           }
           return reply;
         }
+        case "call": {
+          const callable = callables.get(request.callableId);
+          if (callable === undefined)
+            throw new Error(`unknown callableId ${request.callableId}`);
+          const wantMetrics = request.withMetrics === true;
+          const startedAt = wantMetrics ? Date.now() : 0;
+          const argValues = request.args.map((a) => rehydrate(a));
+          const result = await callable.fn(...argValues);
+          const reply: WorkerReply = {
+            id: request.id,
+            ok: true,
+            result: { kind: "value", value: result },
+          };
+          if (wantMetrics) {
+            reply.metrics = {
+              cpuMs: Date.now() - startedAt,
+              heapBytes: memoryUsage().current,
+            };
+          }
+          return reply;
+        }
         case "disposeContext": {
           contexts.delete(request.contextId);
+          // Cascade: drop any callables bound to this context so a
+          // later `.call()` reports a clean "unknown callableId"
+          // instead of silently invoking against an orphan sandbox.
+          for (const [callableId, callable] of callables) {
+            if (callable.contextId === request.contextId) {
+              callables.delete(callableId);
+            }
+          }
           return { id: request.id, ok: true, result: null };
         }
         case "disposeScript": {
           scripts.delete(request.scriptId);
+          return { id: request.id, ok: true, result: null };
+        }
+        case "disposeCallable": {
+          callables.delete(request.callableId);
           return { id: request.id, ok: true, result: null };
         }
         case "heap": {

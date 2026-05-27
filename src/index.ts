@@ -18,6 +18,7 @@ export {
   TimeoutError,
 } from "./types";
 export type {
+  Callable,
   Context,
   CreateContextOptions,
   CreateIsolate,

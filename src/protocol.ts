@@ -48,6 +48,12 @@ export type HostRequest =
   | { id: number; op: "compile"; source: string }
   | {
       id: number;
+      op: "compileCallable";
+      contextId: number;
+      source: string;
+    }
+  | {
+      id: number;
       op: "createContext";
       seed?: string;
       snapshot?: Record<string, unknown>;
@@ -68,8 +74,16 @@ export type HostRequest =
       scriptId: number;
       withMetrics?: boolean;
     }
+  | {
+      id: number;
+      op: "call";
+      callableId: number;
+      args: WireValue[];
+      withMetrics?: boolean;
+    }
   | { id: number; op: "disposeContext"; contextId: number }
   | { id: number; op: "disposeScript"; scriptId: number }
+  | { id: number; op: "disposeCallable"; callableId: number }
   | { id: number; op: "heap" }
   | {
       /** Host's reply to a worker → host Reference call. */
