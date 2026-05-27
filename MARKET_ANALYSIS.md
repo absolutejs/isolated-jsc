@@ -42,6 +42,29 @@ but runtime execution uses Bun's native transpiler. The sharper claim is:
 > `isolated-vm` for embedders who need to run untrusted TypeScript/JavaScript
 > inside a bounded heap with host capabilities explicitly brokered.
 
+## Bun Positioning Proof
+
+The strongest Bun-specific wedge is not generic sandboxing. It is the gap between Bun as a fast TypeScript application runtime and Bun as an embeddable runtime for untrusted user code.
+
+| Bun workload                      | What teams try first                                                        | Why it hurts                                                             | isolated-jsc framing                                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| AI tool/code execution            | Spawn Bun per snippet, containerize each run, or stay on Node `isolated-vm` | High cold start/IPC cost, split runtime stack, weak host-tool ergonomics | Keep the host app in Bun, run generated JS in a bounded JSC isolate, broker tools through `Reference`    |
+| Tenant scripts and automations    | `new Function`, `node:vm`, plugin hooks, or external workers                | Ambient authority, unclear teardown, no per-tenant heap story            | One isolate/pool key per tenant with timeout, heap cap, metrics, and explicit capabilities               |
+| User plugins                      | Run plugins inside the host process or force a separate service             | Plugins can see too much or require a runtime migration                  | Bun-native plugin evaluation with no ambient `Bun`, `process`, filesystem, network, or Worker by default |
+| TypeScript-authored customization | Transpile with Bun, then run in-process without a real boundary             | Fast TS loading exists, but execution isolation is missing               | Let Bun own transpilation/type-check workflows; let isolated-jsc own bounded execution                   |
+| Node migration                    | Keep the isolation workload on Node because `isolated-vm` is V8-only        | Two runtimes, duplicated deployment, no clean Bun port                   | Present `isolated-jsc` as the porting target for isolate-shaped APIs on JavaScriptCore                   |
+
+This is the launch frame to keep repeating:
+
+> Bun already makes TypeScript execution fast. `@absolutejs/isolated-jsc` makes untrusted TypeScript/JavaScript execution embeddable inside Bun.
+
+The proof obligations behind that frame are:
+
+- Reproducible local benchmarks against Worker, process-spawn, and optional Node `isolated-vm` baselines.
+- A migration guide for teams that know the `isolated-vm` API shape but want to move the host runtime to Bun.
+- A security model that explains when in-process JSC isolation is enough and when to compose it with process, container, uid, or network boundaries.
+- A TypeScript recipe that uses Bun for transpilation and `tsc --noEmit` for type-checking, without implying Bun uses `tsc` at runtime.
+
 ## Pain Points To Speak To
 
 1. **AI-generated code execution**
@@ -106,29 +129,20 @@ Avoid overclaiming:
   limit instead of a stale 64 MB cap. This keeps the worker backend test suite
   aligned with the documented 256 MB worker default and makes the suite green
   again.
+- 2026-05-27: Shipped the benchmark proof pack in `BENCHMARKS.md` with FFI,
+  Worker, Bun process-spawn, and optional Node `isolated-vm` baselines.
 
 ## Current Product Gaps
 
 Highest leverage dev work before a stronger public push:
 
-1. **Market proof bench**
-
-   - Bench `isolated-jsc` FFI vs Worker backend vs Node `isolated-vm` vs
-     `child_process` for:
-     - cold isolate/context creation
-     - warm compiled callable
-     - host function call round trip
-     - heap footprint
-     - timeout recovery
-   - Publish results in repo and docs.
-
-2. **Bun migration guide**
+1. **Bun migration guide**
 
    - "Moving from Node `isolated-vm` to Bun `isolated-jsc`."
    - Map `Isolate`, `Context`, `Script`, `Reference`, `ExternalCopy`,
      timeouts, metrics, and unsupported differences.
 
-3. **Security model doc**
+2. **Security model doc**
 
    - Threat model table: trusted plugin, semi-trusted tenant script,
      arbitrary hostile code.
@@ -136,13 +150,13 @@ Highest leverage dev work before a stronger public push:
    - Hardening checklist: separate process, uid/container, network egress
      policy, secret broker, rate limits, max concurrency.
 
-4. **TypeScript execution story**
+3. **TypeScript execution story**
 
    - Add first-class helper for pre-transpiling TypeScript through Bun before
      isolate execution, with source maps and diagnostics policy.
    - Keep `tsc --noEmit` as type-checking guidance, not runtime framing.
 
-5. **Capability broker primitives**
+4. **Capability broker primitives**
 
    - Standard helper for defining host tools with:
      - schema validation
@@ -151,7 +165,7 @@ Highest leverage dev work before a stronger public push:
      - structured audit log
      - optional tenant context injection
 
-6. **Package ergonomics**
+5. **Package ergonomics**
    - Improve install detection and error messages for Linux JSC packages.
    - Add `isolated-jsc doctor`.
    - Add a tiny `bun run examples/agent-tool.ts` demo.
