@@ -95,21 +95,55 @@ describeIfFfi("FFI Reference call-through", () => {
     expect(await script.run(context)).toBe(22); // 6 + 16
   });
 
-  test("Promise-returning host fns are documented as Worker-only", async () => {
-    // Host fns returning a Promise need Bun's microtask queue to settle,
-    // which the FFI backend's "drain via successive JSEvaluateScript"
-    // approach can't pump. Documented in the Reference JSDoc + here.
-    // For 0.3: surfacing a clear error is the contract. Real async host
-    // work goes through `backend: 'worker'`.
+  test("Promise-returning host fns settle through the FFI pump (0.4+)", async () => {
+    // 0.4 added a polling loop that alternately yields to Bun's event
+    // loop (so host-side `.then` continuations fire and queue JSC
+    // microtasks) and runs a no-op JSEvaluateScript (so JSC drains its
+    // microtask queue). Sync-resolving Promises settle on the first
+    // read; async ones — setTimeout, real I/O — settle on a later cycle.
     isolate = await createIsolate({ backend: "ffi" });
     const context = await isolate.createContext();
-    const asyncRef = new Reference(() => Promise.resolve(42));
-    await context.setGlobal("asyncRef", asyncRef);
-    const script = await isolate.compileScript(
-      "(async () => await asyncRef())()",
+    await context.setGlobal(
+      "syncAsyncRef",
+      new Reference(() => Promise.resolve(42)),
     );
-    const err = await rejection(script.run(context));
-    expect((err as Error).message).toMatch(/synchronously|Worker backend/i);
+    await context.setGlobal(
+      "trueAsyncRef",
+      new Reference(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(7), 5);
+          }),
+      ),
+    );
+    const sync = await isolate.compileScript(
+      "(async () => await syncAsyncRef())()",
+    );
+    expect(await sync.run(context)).toBe(42);
+
+    const async = await isolate.compileScript(
+      "(async () => await trueAsyncRef())()",
+    );
+    expect(await async.run(context)).toBe(7);
+  });
+
+  test("async host fns that exceed the timeout surface TimeoutError", async () => {
+    // The pump is bounded by Script.run({ timeout }). A host fn that
+    // never settles (or settles after the deadline) must throw
+    // TimeoutError — not hang.
+    isolate = await createIsolate({ backend: "ffi" });
+    const context = await isolate.createContext();
+    await context.setGlobal(
+      "hang",
+      new Reference(() => new Promise(() => {})),
+    );
+    const script = await isolate.compileScript(
+      "(async () => await hang())()",
+    );
+    const err = (await rejection(script.run(context, { timeout: 100 }))) as {
+      name: string;
+    };
+    expect(err.name).toBe("TimeoutError");
   });
 
   test("References work in pooled isolates", async () => {

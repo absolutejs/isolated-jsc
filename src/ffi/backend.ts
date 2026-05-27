@@ -760,33 +760,58 @@ const makeReferenceFunction = (
  * makes a real collision very unlikely. */
 let unwrapCounter = 0;
 
-/** If `value` is a JS Promise, drive it to settlement via two follow-up
- * `JSEvaluateScript` calls (JSC drains microtasks between calls). Returns
- * the resolved value or throws the rejection. If the Promise hasn't settled
- * after the drain — i.e. it's waiting on real async work — throws a clear
- * error pointing the caller at the Worker backend. */
-const unwrapResultPromise = (
+/** If `value` is a JS Promise, drive it to settlement and return the
+ * resolved value (or throw the rejection). Sync-settling Promises
+ * resolve on the first read; async-settling ones (Promise-returning
+ * host fns that hit Bun's microtask queue via `.then`, setTimeout, real
+ * I/O) are pumped by alternately yielding to Bun's event loop (so the
+ * host's `.then` continuations fire and queue JSC microtasks via
+ * `JSObjectCallAsFunction(resolve, …)`) and running a no-op
+ * `JSEvaluateScript` (so JSC drains its microtask queue).
+ *
+ * Bounded by `deadlineMs` — if the promise hasn't settled by then,
+ * throws {@link TimeoutError}. The caller (`Script.run`) passes its own
+ * `timeout` so the bound matches the user's wall-clock expectation.
+ *
+ * In 0.3 this used to throw "Promise can't unwrap synchronously" after
+ * the first read — that error is gone in 0.4. */
+const unwrapResultPromise = async (
   state: IsolateFfiState,
   ctx: bigint,
   value: bigint,
-): unknown => {
+  deadlineMs: number,
+): Promise<unknown> => {
   const s = state.symbols;
   if (value === 0n || !s.JSValueIsObject(ctx, value)) {
     return jsToHost(s, ctx, value);
   }
-  // Probe: does `value.then` exist and is it a function? Cheap to check via
-  // a tiny eval that wires up the .then continuation. If `.then` is absent
-  // the eval throws, which we catch and treat as "not a Promise."
   const id = ++unwrapCounter;
   const stashName = `__isolatedJsc_promise_${id}`;
   const stateName = `__isolatedJsc_state_${id}`;
-  // Install the JSValueRef under our temp global. JSObjectSetProperty
-  // doesn't need the property to pre-exist.
   const global = s.JSContextGetGlobalObject(ctx);
   const stashKey = makeJsString(s, stashName);
   const setExc = new BigUint64Array(1);
   s.JSObjectSetProperty(ctx, global, stashKey, value, 0, BigInt(ptr(setExc)));
   s.JSStringRelease(stashKey);
+
+  type ParsedState = {
+    done: boolean;
+    ok: boolean;
+    value?: unknown;
+    error?: string;
+    notPromise?: boolean;
+  };
+
+  const readState = (): ParsedState => {
+    const stateRef = evalAndCheck(
+      state,
+      ctx,
+      `JSON.stringify(${stateName})`,
+      `<unwrap-read-${id}>`,
+    );
+    const stateJson = jsToHost(s, ctx, stateRef) as string;
+    return JSON.parse(stateJson) as ParsedState;
+  };
 
   try {
     evalAndCheck(
@@ -803,31 +828,28 @@ const unwrapResultPromise = (
       }`,
       `<unwrap-setup-${id}>`,
     );
-    const stateRef = evalAndCheck(
-      state,
-      ctx,
-      `JSON.stringify(${stateName})`,
-      `<unwrap-read-${id}>`,
-    );
-    const stateJson = jsToHost(s, ctx, stateRef) as string;
-    const parsed = JSON.parse(stateJson) as {
-      done: boolean;
-      ok: boolean;
-      value?: unknown;
-      error?: string;
-      notPromise?: boolean;
-    };
-    if (parsed.notPromise === true) {
-      // Wasn't a Promise after all; return the value directly.
-      return parsed.value;
-    }
-    if (!parsed.done) {
-      throw new Error(
-        "FFI backend cannot unwrap a Promise that doesn't settle synchronously. " +
-          "Async host work (setTimeout, real I/O, network calls inside a " +
-          "Reference) needs the Worker backend. Pass `{ backend: 'worker' }` " +
-          "to createIsolate for this isolate.",
-      );
+    let parsed = readState();
+    if (parsed.notPromise === true) return parsed.value;
+
+    // Pump until done. Each cycle:
+    //   1. `setTimeout(r, 0)` schedules a macrotask. Bun's microtask
+    //      queue drains BEFORE the macrotask fires, so any pending
+    //      host-side `.then` continuations run — those call
+    //      JSObjectCallAsFunction(resolve, …) which queues a JSC
+    //      microtask resolving our promise.
+    //   2. We resume here. The next JSEvaluateScript (no-op) makes JSC
+    //      drain its microtask queue first → our promise settles, the
+    //      `.then(handler)` above fires, and stateName flips done.
+    //   3. Read state. Loop if still pending.
+    const deadlineAbs = Date.now() + deadlineMs;
+    while (!parsed.done) {
+      if (Date.now() >= deadlineAbs) {
+        throw new TimeoutError(deadlineMs);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      // Empty eval — purely to pump JSC's microtask queue.
+      evalAndCheck(state, ctx, "void 0", `<unwrap-pump-${id}>`);
+      parsed = readState();
     }
     if (!parsed.ok) {
       throw new Error(parsed.error ?? "promise rejected with unknown error");
@@ -884,14 +906,13 @@ const makeFfiScript = (
       }
       throw error;
     }
-    // If the script returned a Promise, unwrap it. JSC drains microtasks
-    // between successive JSEvaluateScript calls, so a synchronously-
-    // settling Promise (the common case — most user code is `(async () =>
-    // ...)()` where every inner await resolves sync) will have fired its
-    // continuation by the time the second eval runs. Promises that settle
-    // asynchronously (setTimeout, real I/O the FFI backend doesn't
-    // currently bridge) will throw a clear error.
-    const value = unwrapResultPromise(state, ctx, result);
+    // If the script returned a Promise, unwrap it. Sync-settling Promises
+    // resolve on the first read (JSC drains microtasks between successive
+    // JSEvaluateScript calls). Async-settling Promises — host fns that hit
+    // Bun's microtask queue via `.then`, setTimeout, real I/O — are pumped
+    // by alternately yielding to Bun's event loop and running a no-op eval.
+    // The wall-clock bound matches the user's `timeout`.
+    const value = await unwrapResultPromise(state, ctx, result, timeoutMs);
     const cpuMs = performance.now() - startedAt;
     const heapBytes = await isolate.heapSizeBytes();
     return { value, cpuMs, heapBytes };
