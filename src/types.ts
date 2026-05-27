@@ -72,6 +72,25 @@ export type IsolateOptions = {
    * HTTP calls but should otherwise be locked down.
    */
   unsafelyExposeGlobals?: string[];
+  /**
+   * Pick the backend explicitly.
+   *
+   * - `"auto"` (default): try FFI first (direct libJavaScriptCore via
+   *   `bun:ffi`); fall back to the Worker backend if libJSC isn't reachable
+   *   (Windows, Linux without `libjavascriptcoregtk` installed, etc).
+   * - `"ffi"`: require FFI; throw {@link JscLibraryNotFoundError} if libJSC
+   *   isn't available.
+   * - `"worker"`: always use the Worker backend, even when FFI would work.
+   *   Useful as an escape hatch.
+   *
+   * The FFI backend is strictly better when available: cold heap is ~300 KB
+   * vs ~46 MB, the two T2 documented residuals (`(0, eval)('Bun')` and
+   * `new Function('return Bun')()`) are closed via
+   * `JSGlobalContextSetEvalEnabled`, timeouts use JSC's interrupt-driven
+   * watchdog (the isolate keeps running after a TimeoutError), and value
+   * marshalling skips the Worker postMessage clone path.
+   */
+  backend?: "auto" | "ffi" | "worker";
 };
 
 /**

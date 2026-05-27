@@ -33,9 +33,15 @@ This leaves an entire category of applications stranded on Node:
 
 `@absolutejs/isolated-jsc` fills that gap. See [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_ and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed).
 
-## What ships today (Phase 1 — v0.1.0)
+## What ships today (v0.2.0)
 
-A Bun-`Worker`-backed isolate with:
+`@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
+
+- **FFI backend (default when libJSC is reachable)** — talks to `libJavaScriptCore` directly via `bun:ffi`. Cold heap ~300 KB, CPU timeouts use JSC's interrupt-driven watchdog (the isolate keeps running after a TimeoutError), and `(0, eval)('X')` / `new Function('return X')()` are blocked entirely via `JSGlobalContextSetEvalEnabled`. Available on macOS (system framework) + Linux with `libjavascriptcoregtk-4.1-0` or `libjavascriptcoregtk-6.0-1` installed.
+
+- **Worker backend (fallback)** — one Bun `Worker` per isolate. Cold heap ~46 MB, timeout terminates the whole isolate. Always available (no system dependency). Default on Windows and any Linux without libJSC.
+
+The two share every public type. Pick explicitly with `createIsolate({ backend: 'ffi' | 'worker' | 'auto' })`, or let `'auto'` (the default) probe for libJSC and fall back to Worker. Both backends:
 
 - **Heap isolation.** Each `Isolate` runs in its own Bun Worker → its own JSC VM → its own GC heap. No memory sharing with the host or with peer isolates.
 - **`isolated-vm`-shaped API.** `Isolate`, `Context`, `Script`, `Reference`, `ExternalCopy`. Port-friendly.
@@ -50,27 +56,32 @@ A Bun-`Worker`-backed isolate with:
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 
-### What it ISN'T (v1 honest limits)
+### What it ISN'T (honest limits per backend)
 
-- **Two indirect-execution escape paths remain.** `(0, eval)('Bun')` and `new Function('return Bun')()` still reach the worker's real globalThis (and through it, `Bun`), because indirect eval and the Function constructor run in the worker's global scope rather than our `with(sandbox)` scope. Closing those would require removing `Function` itself — which breaks async functions, class generators, and most async libraries. Documented as v2 (FFI rewrite) territory.
-- **CPU enforcement is millisecond-grained.** A worker doing a tight infinite loop blocks its own event loop until the host-side timer terminates it. No interrupt-driven preemption.
-- **No prototype-pollution boundary within an isolate.** Multiple contexts in one isolate share JS built-ins (mutating `Date.prototype.toISOString` affects all contexts). Use one isolate per tenant.
+| Path                                                           | FFI backend                                                        | Worker backend                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------- |
+| `fetch(url)` (bare)                                            | **undefined**                                                      | **undefined**                           |
+| `Bun.spawn(...)` (bare)                                        | **undefined**                                                      | **undefined**                           |
+| `globalThis.fetch` / `globalThis.Bun`                          | **undefined**                                                      | **undefined**                           |
+| `this.Bun`                                                     | **undefined**                                                      | **undefined**                           |
+| `eval('Bun')` (direct)                                         | **blocks** (eval disabled per-context)                             | **undefined**                           |
+| `(0, eval)('Bun')` (indirect)                                  | **blocks**                                                         | reachable — documented residual         |
+| `new Function('return Bun')()`                                 | **blocks**                                                         | reachable — documented residual         |
+| `Math.PI` / `JSON.stringify` / `Promise` / `crypto.randomUUID` | reachable                                                          | reachable                               |
+| `URL` / `TextEncoder` / `WebSocket`                            | **not present** (JSC API only, no Web APIs)                        | reachable (Bun Worker exposes Web APIs) |
+| Cold heap                                                      | ~300 KB                                                            | ~46 MB                                  |
+| Timeout behaviour                                              | TerminationException thrown into script; **isolate keeps running** | isolate dies, must respawn              |
+| Memory cap                                                     | watchdog-polled `heapCapacity`; terminates on overage              | polled 50 ms; terminates whole isolate  |
+| Synchronous Reference calls                                    | not supported (use `await`)                                        | not supported (use `await`)             |
+| Prototype isolation across contexts                            | one isolate per tenant                                             | one isolate per tenant                  |
 
-## What's planned (Phase 2, in flight)
+### Installation note for the FFI backend
 
-A `bun:ffi` binding to a standalone `libJavaScriptCore` build. Will replace the Worker backend transparently — same API.
-
-| Capability                                | Phase 1 (now)                 | Phase 2 (planned)                            |
-| ----------------------------------------- | ----------------------------- | -------------------------------------------- |
-| Heap isolation                            | ✅ via Worker                 | ✅ via separate JSC VM                       |
-| CPU timeout                               | ms via `Worker.terminate()`   | µs via `JSC::VM::interrupt()`                |
-| Memory cap                                | polled 50ms (soft)            | enforced on-allocate (hard)                  |
-| `fetch` / `process` / `Worker` reachable? | **no** (delete + shadow)      | no — sandbox has its own empty global object |
-| `Bun.spawn(...)` reachable?               | **no** (with-block shadow)    | no                                           |
-| `globalThis.Bun` reachable?               | **no** (Object.create shadow) | no                                           |
-| `(0, eval)('Bun')` reachable?             | **yes** (documented residual) | no — sandbox has its own global object       |
-| Prototype isolation                       | one isolate per tenant        | per-context, even within an isolate          |
-| Synchronous Reference calls               | not supported (use `await`)   | supported via `Atomics.wait` + shared memory |
+- **macOS**: zero install. JavaScriptCore is a system framework at `/System/Library/Frameworks/JavaScriptCore.framework`.
+- **Linux** (Debian / Ubuntu): `sudo apt install libjavascriptcoregtk-4.1-0` (8 MB / 31 MB installed).
+- **Linux** (Fedora): `sudo dnf install webkit2gtk4.1`.
+- **Linux with Playwright already installed**: we accept Playwright's bundled `libjavascriptcoregtk-6.0.so.1` — no extra install.
+- **Windows**: not supported (no system JSC, no realistic distribution path). `createIsolate({ backend: 'auto' })` falls back to Worker automatically; `backend: 'ffi'` throws `JscLibraryNotFoundError`.
 
 ## API
 

@@ -7,6 +7,8 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
+export { JscLibraryNotFoundError, resolveJscLibrary } from "./ffi/resolver";
+export type { JscFlavor, JscLibraryProbe } from "./ffi/resolver";
 export {
   CompileError,
   ExternalCopy,
