@@ -3,6 +3,7 @@ import {
   CapabilityError,
   createCapabilityBroker,
   createIsolate,
+  defineCapabilityTool,
   type CapabilityAuditEvent,
 } from "../src";
 import type { Isolate } from "../src";
@@ -36,7 +37,11 @@ describe("createCapabilityBroker", () => {
     const audit: CapabilityAuditEvent<{ tenantId: string }>[] = [];
     const broker = createCapabilityBroker(
       {
-        add: {
+        add: defineCapabilityTool<
+          { a: number; b: number },
+          number,
+          { tenantId: string }
+        >({
           validateInput: (input) => {
             const object = asObject(input);
             return {
@@ -45,12 +50,11 @@ describe("createCapabilityBroker", () => {
             };
           },
           validateOutput: (output) => Number(output),
-          handler: (input, ctx) => {
-            const { a, b } = input as { a: number; b: number };
+          handler: ({ a, b }, ctx) => {
             expect(ctx.tenantId).toBe("tenant-a");
             return a + b;
           },
-        },
+        }),
       },
       {
         context: { tenantId: "tenant-a" },
@@ -121,10 +125,10 @@ describe("createCapabilityBroker", () => {
     const context = await isolate.createContext();
     const broker = createCapabilityBroker(
       {
-        double: {
+        double: defineCapabilityTool<number, number, undefined>({
           validateInput: (input) => Number(input),
-          handler: (input) => Number(input) * 2,
-        },
+          handler: (input) => input * 2,
+        }),
       },
       { context: undefined },
     );

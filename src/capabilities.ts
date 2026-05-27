@@ -31,6 +31,53 @@ export type CapabilityTool<
   timeoutMs?: number;
 };
 
+export type InferCapabilityInput<TTool> = TTool extends {
+  validateInput: CapabilityValidator<infer TInput>;
+}
+  ? TInput
+  : TTool extends CapabilityTool<infer TInput, unknown, unknown>
+    ? TInput
+    : unknown;
+
+export type InferCapabilityOutput<TTool> = TTool extends {
+  validateOutput: CapabilityValidator<infer TOutput>;
+}
+  ? TOutput
+  : TTool extends CapabilityTool<unknown, infer TOutput, unknown>
+    ? TOutput
+    : unknown;
+
+export type InferCapabilityContext<TTool> =
+  TTool extends CapabilityTool<unknown, unknown, infer TContext>
+    ? TContext
+    : unknown;
+
+type AnyCapabilityTool<TContext = unknown> = CapabilityTool<any, any, TContext>;
+
+type ValidatedCapabilityTool<TInput, TOutput, TContext> = Omit<
+  CapabilityTool<TInput, TOutput, TContext>,
+  "handler" | "validateInput"
+> & {
+  handler: (input: TInput, context: TContext) => TOutput | Promise<TOutput>;
+  validateInput: CapabilityValidator<TInput>;
+};
+
+export function defineCapabilityTool<TInput, TOutput, TContext = unknown>(
+  tool: ValidatedCapabilityTool<TInput, TOutput, TContext>,
+): CapabilityTool<TInput, TOutput, TContext>;
+export function defineCapabilityTool<
+  TInput = unknown,
+  TOutput = unknown,
+  TContext = unknown,
+>(
+  tool: CapabilityTool<TInput, TOutput, TContext>,
+): CapabilityTool<TInput, TOutput, TContext>;
+export function defineCapabilityTool(
+  tool: AnyCapabilityTool,
+): AnyCapabilityTool {
+  return tool;
+}
+
 export type CapabilityBrokerOptions<TContext = unknown> = {
   context: TContext;
   defaultConcurrency?: number;
@@ -72,10 +119,10 @@ const timeout = (tool: string, timeoutMs: number): Promise<never> =>
 
 export const createCapabilityBroker = <
   TContext = unknown,
-  TTools extends Record<
+  TTools extends Record<string, AnyCapabilityTool<TContext>> = Record<
     string,
-    CapabilityTool<unknown, unknown, TContext>
-  > = Record<string, CapabilityTool<unknown, unknown, TContext>>,
+    AnyCapabilityTool<TContext>
+  >,
 >(
   tools: TTools,
   options: CapabilityBrokerOptions<TContext>,

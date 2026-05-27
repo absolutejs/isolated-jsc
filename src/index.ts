@@ -7,13 +7,20 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
-export { CapabilityError, createCapabilityBroker } from "./capabilities";
+export {
+  CapabilityError,
+  createCapabilityBroker,
+  defineCapabilityTool,
+} from "./capabilities";
 export type {
   CapabilityAuditEvent,
   CapabilityAuditStatus,
   CapabilityBroker,
   CapabilityBrokerOptions,
   CapabilityTool,
+  InferCapabilityContext,
+  InferCapabilityInput,
+  InferCapabilityOutput,
   CapabilityValidator,
 } from "./capabilities";
 export { JscLibraryNotFoundError, resolveJscLibrary } from "./ffi/resolver";

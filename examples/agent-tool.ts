@@ -2,6 +2,7 @@ import {
   compileTypeScriptCallable,
   createCapabilityBroker,
   createIsolate,
+  defineCapabilityTool,
   type CapabilityAuditEvent,
 } from "@absolutejs/isolated-jsc";
 
@@ -14,12 +15,18 @@ type OrderLookup = {
   id: string;
 };
 
+type OrderRecord = {
+  id: string;
+  status: string;
+  totalUsd: number;
+};
+
 const tenant: TenantContext = {
   id: "tenant_acme",
   plan: "pro",
 };
 
-const orders = new Map([
+const orders = new Map<string, OrderRecord>([
   [
     "ord_123",
     {
@@ -45,7 +52,11 @@ const audit: CapabilityAuditEvent<TenantContext>[] = [];
 
 const broker = createCapabilityBroker(
   {
-    lookupOrder: {
+    lookupOrder: defineCapabilityTool<
+      OrderLookup,
+      OrderRecord | null,
+      TenantContext
+    >({
       concurrency: 2,
       timeoutMs: 100,
       validateInput: requireOrderLookup,
@@ -56,12 +67,12 @@ const broker = createCapabilityBroker(
         await Bun.sleep(2);
         return orders.get(id) ?? null;
       },
-    },
-    summarize: {
+    }),
+    summarize: defineCapabilityTool<string, string, TenantContext>({
       timeoutMs: 100,
       validateInput: (input) => String(input),
       handler: (text) => text.split(/\s+/).slice(0, 8).join(" "),
-    },
+    }),
   },
   {
     context: tenant,
