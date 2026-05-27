@@ -135,15 +135,15 @@ Avoid overclaiming:
   transpilation before compiling scripts/callables for isolate execution.
 - 2026-05-27: Added capability broker primitives for named host tools with
   validation hooks, timeouts, concurrency limits, tenant context, and audit events.
+- 2026-05-27: Added `isolated-jsc doctor` / `isolated-jsc-doctor` to report
+  Bun/platform details, FFI availability, checked JSC paths, and install hints.
 
 ## Current Product Gaps
 
 Highest leverage dev work before a stronger public push:
 
-1. **Package ergonomics**
-   - Improve install detection and error messages for Linux JSC packages.
-   - Add `isolated-jsc doctor`.
-   - Add a tiny `bun run examples/agent-tool.ts` demo.
+1. **Agent-tool demo**
+   - Add a tiny `bun run examples/agent-tool.ts` demo that combines TypeScript helpers, capability broker, timeout, metrics, and tenant context.
 
 ## Recommended Next Release
 

@@ -10,6 +10,10 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
+  "bin": {
+    "isolated-jsc": "./dist/doctor.js",
+    "isolated-jsc-doctor": "./dist/doctor.js"
+  },
   "license": "CC BY-NC 4.0",
   "author": "Alex Kahn",
   "publishConfig": {
@@ -27,7 +31,7 @@
     "ai-agent"
   ],
   "scripts": {
-    "build": "rm -rf dist && bun build src/index.ts src/worker.ts --outdir dist --sourcemap --target=bun && tsc --project tsconfig.build.json",
+    "build": "rm -rf dist && bun build src/index.ts src/worker.ts src/doctor.ts --outdir dist --sourcemap --target=bun && tsc --project tsconfig.build.json",
     "test": "ISOLATED_JSC_BACKEND=worker bun test tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"./**/*.{ts,json,md}\"",

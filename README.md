@@ -162,6 +162,16 @@ bun add @absolutejs/isolated-jsc
 
 Requires Bun ≥ 1.3.
 
+## Doctor
+
+```bash
+bunx @absolutejs/isolated-jsc
+# or, from this repo:
+bun src/doctor.ts
+```
+
+The doctor prints Bun/platform details, FFI backend availability, JavaScriptCore flavor/path when found, checked library paths when missing, and the install hint for the current platform.
+
 ## Benchmarks
 
 ```bash
