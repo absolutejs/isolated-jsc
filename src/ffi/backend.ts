@@ -839,16 +839,24 @@ const unwrapResultPromise = async (
   let parsed = readState();
   if (parsed.notPromise === true) return parsed.value;
 
-  // Pump until done. Each cycle:
-  //   1. `setTimeout(r, 0)` schedules a macrotask. Bun's microtask
-  //      queue drains BEFORE the macrotask fires, so any pending
-  //      host-side `.then` continuations run — those call
-  //      JSObjectCallAsFunction(resolve, …) which queues a JSC
-  //      microtask resolving our promise.
-  //   2. We resume here. The next JSEvaluateScript (no-op) makes JSC
-  //      drain its microtask queue first → our promise settles, the
-  //      `.then(handler)` above fires, and stateName flips done.
-  //   3. Read state (which deletes stateName inline when done).
+  // Pump until done. Each cycle has two yield modes:
+  //
+  //   FAST: `await new Promise(queueMicrotask)`. Drains Bun's microtask
+  //   queue (so host-side `.then` continuations queued from already-
+  //   settled host promises fire — they call
+  //   `JSObjectCallAsFunction(resolve, …)`, resolving the in-VM
+  //   deferred promise). Cheap (~0.05 ms). Covers Promise.resolve(x)
+  //   host fns and any host fn that settles without libuv I/O.
+  //
+  //   SLOW: `await new Promise(r => setTimeout(r, 0))`. Yields to
+  //   libuv so real I/O can complete. Used as a fallback when the
+  //   microtask yield wasn't enough.
+  //
+  // After either yield we go straight to `readState()` (no separate
+  // no-op eval). JSC drains its microtask queue at the START of every
+  // `JSEvaluateScript`, so `readState`'s eval already fires the in-VM
+  // .then handlers before its `JSON.stringify` body runs — capturing
+  // the post-drain state in one eval instead of two.
   const deadlineAbs = Date.now() + deadlineMs;
   while (!parsed.done) {
     if (Date.now() >= deadlineAbs) {
@@ -867,9 +875,14 @@ const unwrapResultPromise = async (
       }
       throw new TimeoutError(deadlineMs);
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 1));
-    // Empty eval — purely to pump JSC's microtask queue.
-    evalAndCheck(state, ctx, "void 0", `<unwrap-pump-${id}>`);
+
+    // Fast yield first.
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    parsed = readState();
+    if (parsed.done) break;
+
+    // Slow fallback — yield to the event loop for I/O.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     parsed = readState();
   }
   if (!parsed.ok) {
