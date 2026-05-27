@@ -802,72 +802,80 @@ const unwrapResultPromise = async (
     notPromise?: boolean;
   };
 
+  // Read eval that ALSO deletes the state global when done — folds the
+  // 0.4 finally-cleanup eval into the read eval (no separate cleanup
+  // pass). For pump iterations (not done yet), the state global stays
+  // alive so the next read can find it; on the final read the delete
+  // fires inline. Saves one JSEvaluateScript per call.
   const readState = (): ParsedState => {
     const stateRef = evalAndCheck(
       state,
       ctx,
-      `JSON.stringify(${stateName})`,
+      `(() => { const _s = JSON.stringify(${stateName}); if (${stateName} && ${stateName}.done) { delete globalThis['${stateName}']; } return _s; })()`,
       `<unwrap-read-${id}>`,
     );
     const stateJson = jsToHost(s, ctx, stateRef) as string;
     return JSON.parse(stateJson) as ParsedState;
   };
 
-  try {
-    evalAndCheck(
-      state,
-      ctx,
-      `if (${stashName} && typeof ${stashName}.then === 'function') {
-        var ${stateName} = { done: false };
-        ${stashName}.then(
-          (v) => { ${stateName} = { done: true, ok: true, value: v }; },
-          (e) => { ${stateName} = { done: true, ok: false, error: e && e.message ? e.message : String(e) }; },
-        );
-      } else {
-        var ${stateName} = { done: true, ok: true, value: ${stashName}, notPromise: true };
-      }`,
-      `<unwrap-setup-${id}>`,
-    );
-    let parsed = readState();
-    if (parsed.notPromise === true) return parsed.value;
-
-    // Pump until done. Each cycle:
-    //   1. `setTimeout(r, 0)` schedules a macrotask. Bun's microtask
-    //      queue drains BEFORE the macrotask fires, so any pending
-    //      host-side `.then` continuations run — those call
-    //      JSObjectCallAsFunction(resolve, …) which queues a JSC
-    //      microtask resolving our promise.
-    //   2. We resume here. The next JSEvaluateScript (no-op) makes JSC
-    //      drain its microtask queue first → our promise settles, the
-    //      `.then(handler)` above fires, and stateName flips done.
-    //   3. Read state. Loop if still pending.
-    const deadlineAbs = Date.now() + deadlineMs;
-    while (!parsed.done) {
-      if (Date.now() >= deadlineAbs) {
-        throw new TimeoutError(deadlineMs);
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 1));
-      // Empty eval — purely to pump JSC's microtask queue.
-      evalAndCheck(state, ctx, "void 0", `<unwrap-pump-${id}>`);
-      parsed = readState();
-    }
-    if (!parsed.ok) {
-      throw new Error(parsed.error ?? "promise rejected with unknown error");
-    }
-    return parsed.value;
-  } finally {
-    // Best-effort cleanup of the stash globals.
-    try {
-      evalAndCheck(
-        state,
-        ctx,
-        `delete globalThis['${stashName}']; delete globalThis['${stateName}'];`,
-        `<unwrap-cleanup-${id}>`,
+  // Setup eval deletes the stash global at the end — .then() captures
+  // the Promise via the call, so we don't need stashName afterwards.
+  // (For non-Promise inline values we also clear it, copying into state.)
+  evalAndCheck(
+    state,
+    ctx,
+    `if (${stashName} && typeof ${stashName}.then === 'function') {
+      var ${stateName} = { done: false };
+      ${stashName}.then(
+        (v) => { ${stateName} = { done: true, ok: true, value: v }; },
+        (e) => { ${stateName} = { done: true, ok: false, error: e && e.message ? e.message : String(e) }; },
       );
-    } catch {
-      // If cleanup fails, the names linger on globalThis but harm nothing.
+    } else {
+      var ${stateName} = { done: true, ok: true, value: ${stashName}, notPromise: true };
     }
+    delete globalThis['${stashName}'];`,
+    `<unwrap-setup-${id}>`,
+  );
+  let parsed = readState();
+  if (parsed.notPromise === true) return parsed.value;
+
+  // Pump until done. Each cycle:
+  //   1. `setTimeout(r, 0)` schedules a macrotask. Bun's microtask
+  //      queue drains BEFORE the macrotask fires, so any pending
+  //      host-side `.then` continuations run — those call
+  //      JSObjectCallAsFunction(resolve, …) which queues a JSC
+  //      microtask resolving our promise.
+  //   2. We resume here. The next JSEvaluateScript (no-op) makes JSC
+  //      drain its microtask queue first → our promise settles, the
+  //      `.then(handler)` above fires, and stateName flips done.
+  //   3. Read state (which deletes stateName inline when done).
+  const deadlineAbs = Date.now() + deadlineMs;
+  while (!parsed.done) {
+    if (Date.now() >= deadlineAbs) {
+      // State global is still alive; best-effort delete so a hung
+      // promise doesn't leak a global indefinitely. The Promise itself
+      // is held by JSC's .then internal state, not by us.
+      try {
+        evalAndCheck(
+          state,
+          ctx,
+          `delete globalThis['${stateName}'];`,
+          `<unwrap-cleanup-${id}>`,
+        );
+      } catch {
+        // ignore — about to throw TimeoutError anyway.
+      }
+      throw new TimeoutError(deadlineMs);
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    // Empty eval — purely to pump JSC's microtask queue.
+    evalAndCheck(state, ctx, "void 0", `<unwrap-pump-${id}>`);
+    parsed = readState();
   }
+  if (!parsed.ok) {
+    throw new Error(parsed.error ?? "promise rejected with unknown error");
+  }
+  return parsed.value;
 };
 
 const makeFfiScript = (
