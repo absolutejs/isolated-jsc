@@ -25,7 +25,10 @@ const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
 
 describe("createIsolate", () => {
   test("compiles and runs a trivial expression", async () => {
-    const isolate = await createIsolate({ memoryLimit: 32 });
+    // memoryLimit: 128 to comfortably clear the Bun-worker cold-start
+    // heap (~46 MB on Bun 1.3.x). Memory caps below ~64 MB are now too
+    // tight; documented in IsolateOptions.memoryLimit JSDoc.
+    const isolate = await createIsolate({ memoryLimit: 128 });
     const context = await isolate.createContext();
     const script = await isolate.compileScript("1 + 2");
     const result = await script.run(context);
@@ -115,30 +118,114 @@ describe("createIsolate", () => {
   });
 
   test("heap usage is reported in bytes", async () => {
-    const isolate = await createIsolate();
+    // Default memoryLimit is 64 MB. Starting heap (built-ins + the
+    // sandboxPrototype carrying ~100 safe globals) is in the low double-
+    // digit MB on JSC. Assert against a generous ceiling — the point is
+    // "the reading isn't junk", not "the cold start is small".
+    const isolate = await createIsolate({ memoryLimit: 256 });
     const bytes = await isolate.heapSizeBytes();
     expect(bytes).toBeGreaterThan(0);
-    expect(bytes).toBeLessThan(64 * 1024 * 1024); // under default cap
+    expect(bytes).toBeLessThan(256 * 1024 * 1024);
     await isolate.dispose();
   });
 });
 
 describe("hostile tenant", () => {
-  test("cannot reach the host filesystem or fetch", async () => {
+  test("hardened sandbox: fetch / Bun / process / Worker unreachable via every path that's blockable", async () => {
     const isolate = await createIsolate();
     const context = await isolate.createContext();
-    // In the wrapped sandbox, undeclared globals don't fall through to
-    // the worker's real globalThis because `with(sandbox)` shadows them
-    // to undefined. We expose nothing.
+    const script = await isolate.compileScript(`({
+      bareFetch: typeof fetch,
+      bareBun: typeof Bun,
+      bareProcess: typeof process,
+      bareWorker: typeof Worker,
+      bareWebSocket: typeof WebSocket,
+      barePostMessage: typeof postMessage,
+      globalThisFetch: typeof globalThis.fetch,
+      globalThisBun: typeof globalThis.Bun,
+      thisBun: typeof this.Bun,
+      directEvalBun: typeof eval('Bun'),
+    })`);
+    const result = (await script.run(context)) as Record<string, string>;
+    expect(result.bareFetch).toBe("undefined");
+    expect(result.bareBun).toBe("undefined");
+    expect(result.bareProcess).toBe("undefined");
+    expect(result.bareWorker).toBe("undefined");
+    expect(result.bareWebSocket).toBe("undefined");
+    expect(result.barePostMessage).toBe("undefined");
+    expect(result.globalThisFetch).toBe("undefined");
+    expect(result.globalThisBun).toBe("undefined");
+    expect(result.thisBun).toBe("undefined");
+    expect(result.directEvalBun).toBe("undefined");
+    await isolate.dispose();
+  });
+
+  test("hardened sandbox: safe globals (Math, JSON, Promise, URL, crypto, console, …) stay reachable", async () => {
+    const isolate = await createIsolate();
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`({
+      math: typeof Math.PI,
+      json: typeof JSON.stringify({}),
+      promise: typeof Promise.resolve(1).then,
+      url: new URL('https://x/y').pathname,
+      crypto: typeof crypto.randomUUID,
+      setTimeout: typeof setTimeout,
+      textEncoder: new TextEncoder().encode('a').length,
+      console: typeof console.log,
+    })`);
+    const result = (await script.run(context)) as Record<string, unknown>;
+    expect(result.math).toBe("number");
+    expect(result.json).toBe("string");
+    expect(result.promise).toBe("function");
+    expect(result.url).toBe("/y");
+    expect(result.crypto).toBe("function");
+    expect(result.setTimeout).toBe("function");
+    expect(result.textEncoder).toBe(1);
+    expect(result.console).toBe("function");
+    await isolate.dispose();
+  });
+
+  test("documented residual: (0, eval)('Bun') and new Function('return Bun')() still escape", async () => {
+    // Indirect-eval and the Function constructor run in the worker's real
+    // global scope, which still has Bun (non-configurable). This is v3
+    // (FFI rewrite) territory — documented in IsolateOptions.harden.
+    const isolate = await createIsolate();
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`({
+      indirectEval: typeof (0, eval)('Bun'),
+      functionCtor: typeof (new Function('return Bun'))(),
+    })`);
+    const result = (await script.run(context)) as Record<string, string>;
+    expect(result.indirectEval).toBe("object");
+    expect(result.functionCtor).toBe("object");
+    await isolate.dispose();
+  });
+
+  test("harden: false restores v0.0.1 behaviour (fetch / Bun / process reachable)", async () => {
+    const isolate = await createIsolate({ harden: false });
+    const context = await isolate.createContext();
     const script = await isolate.compileScript(
-      'typeof fetch + "," + typeof Bun + "," + typeof process',
+      `typeof fetch + ',' + typeof Bun + ',' + typeof process`,
     );
     const result = await script.run(context);
-    // JSC actually exposes these on the worker's globalThis; this test
-    // documents what IS reachable today so we can tighten in v2.
-    // The expected behaviour for v1: they ARE reachable inside the
-    // worker. Heap isolation is the only Phase-1 guarantee.
-    expect(typeof result).toBe("string");
+    expect(result).toBe("function,object,object");
+    await isolate.dispose();
+  });
+
+  test("unsafelyExposeGlobals lets specific capabilities through while keeping the rest sealed", async () => {
+    const isolate = await createIsolate({
+      unsafelyExposeGlobals: ["fetch"],
+    });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`({
+      fetch: typeof fetch,
+      Bun: typeof Bun,
+      process: typeof process,
+    })`);
+    const result = (await script.run(context)) as Record<string, string>;
+    expect(result.fetch).toBe("function");
+    expect(result.Bun).toBe("undefined");
+    expect(result.process).toBe("undefined");
     await isolate.dispose();
   });
 
@@ -146,8 +233,9 @@ describe("hostile tenant", () => {
     // Allocate heap-resident JS objects (not Uint8Arrays — those go
     // through bmalloc on JSC and don't count toward the GC heap that
     // `bun:jsc.memoryUsage().current` reports). 50k × ~10 KB strings ≈
-    // 500 MB of heap, well past the 32 MB cap.
-    const isolate = await createIsolate({ memoryLimit: 32 });
+    // 500 MB of heap, well past the 128 MB cap. We use 128 (not 32) to
+    // clear the worker's ~46 MB cold-start baseline.
+    const isolate = await createIsolate({ memoryLimit: 128 });
     const context = await isolate.createContext();
     const script = await isolate.compileScript(`
 			(async () => {
