@@ -31,7 +31,8 @@
     "test": "ISOLATED_JSC_BACKEND=worker bun test tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"./**/*.{ts,json,md}\"",
-    "release": "bun run format && bun run build && bun publish"
+    "release": "bun run format && bun run build && bun publish",
+    "bench:proof": "bun bench/proof.ts"
   },
   "peerDependencies": {
     "bun-types": ">= 1.3.0"
@@ -50,6 +51,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "BENCHMARKS.md",
+    "MARKET_ANALYSIS.md"
   ]
 }

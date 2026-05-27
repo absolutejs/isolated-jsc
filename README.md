@@ -141,6 +141,14 @@ bun add @absolutejs/isolated-jsc
 
 Requires Bun ≥ 1.3.
 
+## Benchmarks
+
+```bash
+bun run bench:proof
+```
+
+This writes `BENCHMARKS.md` with local measurements for the FFI backend, Worker backend, Bun process-spawn baseline, and Node `isolated-vm` when that optional native package is installed in the Node environment.
+
 ## Tests
 
 ```bash
