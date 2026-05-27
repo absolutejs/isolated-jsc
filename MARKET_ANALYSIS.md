@@ -145,7 +145,7 @@ Avoid overclaiming:
 Highest leverage dev work before a stronger public push:
 
 1. **Release prep**
-   - Bump to 0.7.0, run package smoke checks, and cut a release when ready.
+   - Run final package smoke checks and publish 0.7.0.
 
 ## Recommended Next Release
 
