@@ -1,0 +1,43 @@
+# Changelog
+
+All notable changes to `@absolutejs/isolated-jsc` are documented here.
+
+## 0.7.2 - 2026-05-27
+
+### Added
+
+- Added typed direct calls for capability brokers: `broker.call("tool", input)` now infers the known tool output type from the tool map.
+- Exported `CapabilityBrokerCall` and `CapabilityBrokerFor` for users who want to name the typed broker surface.
+
+### Changed
+
+- Kept unknown or dynamic tool names on a fallback `Promise<unknown>` path so runtime behavior and sandbox `Reference` usage remain unchanged.
+- Updated README and AbsoluteJS docs examples to show the typed `defineCapabilityTool()` plus typed `broker.call()` flow.
+
+## 0.7.1 - 2026-05-27
+
+### Added
+
+- Added `defineCapabilityTool()` so validator-returned input types flow into capability handlers without handler-side casts.
+- Added `InferCapabilityInput`, `InferCapabilityOutput`, and `InferCapabilityContext` helper types.
+
+### Changed
+
+- Updated the agent-tool example and capability tests to use typed capability definitions.
+
+## 0.7.0 - 2026-05-27
+
+### Added
+
+- Added the benchmark proof pack covering the FFI backend, Worker backend, Bun process-spawn baseline, and optional Node `isolated-vm` baseline.
+- Added Bun-focused market analysis and positioning for teams that need an `isolated-vm`-shaped runtime on JavaScriptCore.
+- Added a migration guide for moving Node `isolated-vm` workloads to Bun with `@absolutejs/isolated-jsc`.
+- Added expanded security guidance for backend choice, Worker residuals, resource limits, and deployment hardening.
+- Added TypeScript execution helpers for scripts and reusable callables before isolate execution.
+- Added the capability broker for named host tools with validation hooks, timeout, concurrency, tenant context, and audit events.
+- Added the doctor CLI bin for backend/JSC diagnostics and platform install hints.
+- Added the runnable agent-tool example combining TypeScript callables, brokered tools, tenant context, metrics, and audit events.
+
+### Changed
+
+- Normalized package metadata for the public npm release.

@@ -31,7 +31,7 @@ This leaves an entire category of applications stranded on Node:
 - **Build-time evaluation of untrusted plugins.** ([oven-sh/bun#23653](https://github.com/oven-sh/bun/issues/23653))
 - **General sandboxing permissions.** ([oven-sh/bun#6617](https://github.com/oven-sh/bun/issues/6617))
 
-`@absolutejs/isolated-jsc` fills that gap. See [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_ and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed). See [MIGRATING_FROM_ISOLATED_VM.md](./MIGRATING_FROM_ISOLATED_VM.md) for the Node `isolated-vm` to Bun migration path. See [SECURITY.md](./SECURITY.md) for the threat model and hardening guidance.
+`@absolutejs/isolated-jsc` fills that gap. See [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_ and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed). See [MIGRATING_FROM_ISOLATED_VM.md](./MIGRATING_FROM_ISOLATED_VM.md) for the Node `isolated-vm` to Bun migration path. See [SECURITY.md](./SECURITY.md) for the threat model and hardening guidance. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## What ships today (v0.7.2)
 
