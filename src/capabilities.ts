@@ -35,7 +35,7 @@ export type InferCapabilityInput<TTool> = TTool extends {
   validateInput: CapabilityValidator<infer TInput>;
 }
   ? TInput
-  : TTool extends CapabilityTool<infer TInput, unknown, unknown>
+  : TTool extends CapabilityTool<infer TInput, any, any>
     ? TInput
     : unknown;
 
@@ -43,16 +43,31 @@ export type InferCapabilityOutput<TTool> = TTool extends {
   validateOutput: CapabilityValidator<infer TOutput>;
 }
   ? TOutput
-  : TTool extends CapabilityTool<unknown, infer TOutput, unknown>
+  : TTool extends CapabilityTool<any, infer TOutput, any>
     ? TOutput
     : unknown;
 
 export type InferCapabilityContext<TTool> =
-  TTool extends CapabilityTool<unknown, unknown, infer TContext>
-    ? TContext
-    : unknown;
+  TTool extends CapabilityTool<any, any, infer TContext> ? TContext : unknown;
 
 type AnyCapabilityTool<TContext = unknown> = CapabilityTool<any, any, TContext>;
+
+export type CapabilityBrokerCall<
+  TTools extends Record<string, AnyCapabilityTool<any>>,
+> = {
+  <TToolName extends Extract<keyof TTools, string>>(
+    tool: TToolName,
+    input: InferCapabilityInput<TTools[TToolName]>,
+  ): Promise<InferCapabilityOutput<TTools[TToolName]>>;
+  (tool: string, input?: unknown): Promise<unknown>;
+};
+
+export type CapabilityBrokerFor<
+  TTools extends Record<string, AnyCapabilityTool<any>>,
+> = {
+  call: CapabilityBrokerCall<TTools>;
+  reference: Reference<(tool: unknown, input?: unknown) => Promise<unknown>>;
+};
 
 type ValidatedCapabilityTool<TInput, TOutput, TContext> = Omit<
   CapabilityTool<TInput, TOutput, TContext>,
@@ -118,15 +133,12 @@ const timeout = (tool: string, timeoutMs: number): Promise<never> =>
   });
 
 export const createCapabilityBroker = <
-  TContext = unknown,
-  TTools extends Record<string, AnyCapabilityTool<TContext>> = Record<
-    string,
-    AnyCapabilityTool<TContext>
-  >,
+  TTools extends Record<string, AnyCapabilityTool<any>>,
+  TContext = InferCapabilityContext<TTools[keyof TTools]>,
 >(
   tools: TTools,
   options: CapabilityBrokerOptions<TContext>,
-): CapabilityBroker => {
+): CapabilityBrokerFor<TTools> => {
   const active = new Map<string, number>();
 
   const audit = (event: CapabilityAuditEvent<TContext>): void => {
@@ -219,7 +231,7 @@ export const createCapabilityBroker = <
   };
 
   return {
-    call,
+    call: call as CapabilityBrokerFor<TTools>["call"],
     reference: new Reference((tool, input) => call(String(tool), input)),
   };
 };

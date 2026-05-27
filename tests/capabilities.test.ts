@@ -69,6 +69,9 @@ describe("createCapabilityBroker", () => {
     expect(audit.map((event) => event.status)).toEqual(["start", "success"]);
     expect(audit[1]?.tool).toBe("add");
     expect(audit[1]?.output).toBe(42);
+    const direct = await broker.call("add", { a: 1, b: 2 });
+    const typedDirect: number = direct;
+    expect(typedDirect).toBe(3);
   });
 
   test("rejects unknown tools", async () => {
@@ -132,6 +135,9 @@ describe("createCapabilityBroker", () => {
       },
       { context: undefined },
     );
+    const direct = await broker.call("double", 21);
+    const typedDirect: number = direct;
+    expect(typedDirect).toBe(42);
     const fn = await context.compileCallable(
       `async (tools, value) => await tools("double", value)`,
     );

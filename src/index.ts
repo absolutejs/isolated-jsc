@@ -16,6 +16,8 @@ export type {
   CapabilityAuditEvent,
   CapabilityAuditStatus,
   CapabilityBroker,
+  CapabilityBrokerCall,
+  CapabilityBrokerFor,
   CapabilityBrokerOptions,
   CapabilityTool,
   InferCapabilityContext,
