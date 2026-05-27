@@ -121,6 +121,28 @@ receive JavaScript source. The recommended migration path is:
 3. Run the emitted JavaScript in `isolated-jsc` with explicit `Reference`
    capabilities.
 
+The package includes helpers for the common path:
+
+```ts
+import {
+  compileTypeScript,
+  compileTypeScriptCallable,
+  transpileTypeScript,
+} from "@absolutejs/isolated-jsc";
+
+const script = await compileTypeScript(
+  isolate,
+  "const input: number = 20; input + 22",
+);
+
+const handler = await compileTypeScriptCallable(
+  context,
+  "async (name: string): Promise<string> => name.trim().toUpperCase()",
+);
+
+const js = transpileTypeScript("const n: number = 1; n + 1");
+```
+
 Do not frame this as "Bun uses `tsc` at runtime." Bun's runtime transpiler and
 TypeScript's type checker are separate parts of the workflow.
 

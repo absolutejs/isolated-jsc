@@ -131,6 +131,8 @@ Avoid overclaiming:
   again.
 - 2026-05-27: Shipped the benchmark proof pack in `BENCHMARKS.md` with FFI,
   Worker, Bun process-spawn, and optional Node `isolated-vm` baselines.
+- 2026-05-27: Added TypeScript execution helpers that use Bun native
+  transpilation before compiling scripts/callables for isolate execution.
 
 ## Current Product Gaps
 
@@ -150,13 +152,7 @@ Highest leverage dev work before a stronger public push:
    - Hardening checklist: separate process, uid/container, network egress
      policy, secret broker, rate limits, max concurrency.
 
-3. **TypeScript execution story**
-
-   - Add first-class helper for pre-transpiling TypeScript through Bun before
-     isolate execution, with source maps and diagnostics policy.
-   - Keep `tsc --noEmit` as type-checking guidance, not runtime framing.
-
-4. **Capability broker primitives**
+3. **Capability broker primitives**
 
    - Standard helper for defining host tools with:
      - schema validation
@@ -165,7 +161,7 @@ Highest leverage dev work before a stronger public push:
      - structured audit log
      - optional tenant context injection
 
-5. **Package ergonomics**
+4. **Package ergonomics**
    - Improve install detection and error messages for Linux JSC packages.
    - Add `isolated-jsc doctor`.
    - Add a tiny `bun run examples/agent-tool.ts` demo.

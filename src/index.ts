@@ -10,6 +10,15 @@ export { createIsolatePool } from "./pool";
 export { JscLibraryNotFoundError, resolveJscLibrary } from "./ffi/resolver";
 export type { JscFlavor, JscLibraryProbe } from "./ffi/resolver";
 export {
+  compileTypeScript,
+  compileTypeScriptCallable,
+  transpileTypeScript,
+} from "./typescript";
+export type {
+  TranspileTypeScriptOptions,
+  TypeScriptLoader,
+} from "./typescript";
+export {
   CompileError,
   ExternalCopy,
   IsolateDisposedError,

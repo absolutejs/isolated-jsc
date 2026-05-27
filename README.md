@@ -88,6 +88,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 
 ```ts
 import {
+  compileTypeScriptCallable,
   createIsolate,
   Reference,
   ExternalCopy,
@@ -122,6 +123,13 @@ const script: Script = await isolate.compileScript(`
 
 const count = await script.run(context, { timeout: 500 });
 // count === number of rows
+
+// TypeScript source: transpiled with Bun before execution in the isolate.
+const handler = await compileTypeScriptCallable(
+  context,
+  "async (name: string): Promise<string> => name.trim().toUpperCase()",
+);
+await handler.call([" alex "]); // "ALEX"
 
 await isolate.dispose();
 ```
