@@ -36,7 +36,8 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"./**/*.{ts,json,md}\"",
     "release": "bun run format && bun run build && bun publish",
-    "bench:proof": "bun bench/proof.ts"
+    "bench:proof": "bun bench/proof.ts",
+    "example:agent-tool": "bun run build && bun examples/agent-tool.ts"
   },
   "peerDependencies": {
     "bun-types": ">= 1.3.0"
@@ -59,6 +60,7 @@
     "BENCHMARKS.md",
     "MARKET_ANALYSIS.md",
     "MIGRATING_FROM_ISOLATED_VM.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "examples"
   ]
 }

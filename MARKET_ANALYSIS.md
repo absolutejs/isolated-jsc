@@ -137,13 +137,15 @@ Avoid overclaiming:
   validation hooks, timeouts, concurrency limits, tenant context, and audit events.
 - 2026-05-27: Added `isolated-jsc doctor` / `isolated-jsc-doctor` to report
   Bun/platform details, FFI availability, checked JSC paths, and install hints.
+- 2026-05-27: Added `examples/agent-tool.ts` to demonstrate TypeScript helpers,
+  capability broker tools, tenant context, timeouts, metrics, and audit events.
 
 ## Current Product Gaps
 
 Highest leverage dev work before a stronger public push:
 
-1. **Agent-tool demo**
-   - Add a tiny `bun run examples/agent-tool.ts` demo that combines TypeScript helpers, capability broker, timeout, metrics, and tenant context.
+1. **Release prep**
+   - Bump to 0.7.0, run package smoke checks, and cut a release when ready.
 
 ## Recommended Next Release
 

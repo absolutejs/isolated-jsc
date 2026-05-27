@@ -172,6 +172,14 @@ bun src/doctor.ts
 
 The doctor prints Bun/platform details, FFI backend availability, JavaScriptCore flavor/path when found, checked library paths when missing, and the install hint for the current platform.
 
+## Examples
+
+```bash
+bun run example:agent-tool
+```
+
+The agent-tool example combines TypeScript callable compilation, a capability broker, tenant context, tool timeouts, audit events, and per-call metrics.
+
 ## Benchmarks
 
 ```bash
