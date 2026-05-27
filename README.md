@@ -56,6 +56,19 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 
+### Bun sandboxing decision guide
+
+| Use case                                                                         | Choose                                                               | Why                                                                                                                                   |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Local development, demos, CI smoke tests, or platforms without libJSC            | `backend: "auto"`                                                    | Uses FFI when available and Worker when it is not, so the same code runs everywhere.                                                  |
+| Production untrusted code on macOS or Linux where you can install JavaScriptCore | `backend: "ffi"`                                                     | Lowest cold heap, interrupt-driven CPU timeouts, isolate survives timeouts, and eval / Function-constructor residuals are closed.     |
+| Production untrusted code on Windows or hosts without system JavaScriptCore      | Worker fallback behind a process/container boundary                  | Worker keeps heap isolation and resource caps, but hostile workloads should not share host secrets or broad network/file permissions. |
+| User plugins that need explicit host powers                                      | FFI plus `Reference` / capability broker                             | Keep the sandbox global small and expose only validated, audited host tools.                                                          |
+| High-value secrets, arbitrary third-party code, or network-adjacent workloads    | FFI plus process, container, uid, seccomp, and network egress policy | JavaScript isolation is one layer; OS isolation still owns blast-radius control.                                                      |
+| Trusted app code that only needs cancellation or tenant-level pooling            | Worker or FFI pool                                                   | Security posture matters less; optimize for deployment reach and operational simplicity.                                              |
+
+Rule of thumb: use `backend: "ffi"` for hostile-code production paths, `backend: "auto"` for portable defaults, and add OS/process isolation whenever sandbox escape would expose meaningful host secrets.
+
 ### What it ISN'T (honest limits per backend)
 
 | Path                                                           | FFI backend                                                        | Worker backend                          |
