@@ -54,6 +54,7 @@
     "README.md",
     "BENCHMARKS.md",
     "MARKET_ANALYSIS.md",
-    "MIGRATING_FROM_ISOLATED_VM.md"
+    "MIGRATING_FROM_ISOLATED_VM.md",
+    "SECURITY.md"
   ]
 }
