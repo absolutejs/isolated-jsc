@@ -33,7 +33,7 @@ This leaves an entire category of applications stranded on Node:
 
 `@absolutejs/isolated-jsc` fills that gap. See [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_ and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed).
 
-## What ships today (v0.0.1, Phase 1)
+## What ships today (Phase 1 — v0.1.0)
 
 A Bun-`Worker`-backed isolate with:
 
@@ -41,30 +41,36 @@ A Bun-`Worker`-backed isolate with:
 - **`isolated-vm`-shaped API.** `Isolate`, `Context`, `Script`, `Reference`, `ExternalCopy`. Port-friendly.
 - **Wall-clock timeouts.** `script.run(context, { timeout: 500 })` — millisecond accuracy, enforced from the host via `Worker.terminate()`. v1 trade-off: timeout terminates the entire isolate (pool at the app layer if you need to recycle).
 - **Memory limits.** Soft cap polled every 50 ms via `bun:jsc.memoryUsage()`. Breach posts a fatal and self-terminates; the host rejects pending ops with `MemoryLimitError`.
+- **Hardened sandbox by default (T2.1, new in 0.1).** Host-capability globals — `fetch`, `Bun`, `process`, `Worker`, `WebSocket`, host `postMessage` / `addEventListener`, `navigator`, storage, … — are stripped from the sandbox. User code can't reach them via bare lookup, `globalThis.X`, `this.X`, or direct `eval('X')`. Pure JS built-ins (Math, JSON, Promise, the typed-array suite) and safe Web primitives (URL, TextEncoder, Web Crypto, setTimeout, console) stay reachable. Opt out per-isolate via `harden: false` for trusted code, or expose specific capabilities via `unsafelyExposeGlobals: ['fetch']`.
 - **Host-callable `Reference`s.** Expose host functions to the isolate. Calls round-trip via async message-passing (await on the isolate side).
 - **`ExternalCopy`** for marking large host-side values for cheap pass-through.
 - **Optional console capture.** `onConsole` hook to route isolate `console.log` calls back to the host (default: dropped, so untrusted code can't pollute host logs).
+- **First-class isolate pool (T2.2, new in 0.1).** `createIsolatePool({ isolate, maxSize, idleMs, recycleAfter })` returns a keyed pool — lazy spawn per key, reuse across calls, LRU eviction at cap, transparent re-spawn after isolate self-termination, configurable post-N-call recycle to bound JSC heap creep. Replaces the bespoke per-tenant lookup-or-spawn map every consumer rolls.
+- **Context seed + snapshot (T2.3, new in 0.1).** `createContext({ seed, snapshot })` runs setup code (assign onto `this`) and restores cloneable data state from a previous `context.snapshot()`. Pair them to fork a fresh context from a prior one's accumulated state (the AI-agent-across-turns pattern).
+- **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
+- **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 
 ### What it ISN'T (v1 honest limits)
 
-- **Not a full security boundary against adversarial code.** A determined attacker inside the worker can still reach `Bun` / `fetch` / `process` because those globals exist on the worker's `globalThis`. v1's contract is _heap isolation_ + _resource limits_, suitable for trusted-tenant scripting, AI agents under supervision, and plugin sandboxing. Adversarial AI-generated code needs Phase 2 (below).
+- **Two indirect-execution escape paths remain.** `(0, eval)('Bun')` and `new Function('return Bun')()` still reach the worker's real globalThis (and through it, `Bun`), because indirect eval and the Function constructor run in the worker's global scope rather than our `with(sandbox)` scope. Closing those would require removing `Function` itself — which breaks async functions, class generators, and most async libraries. Documented as v2 (FFI rewrite) territory.
 - **CPU enforcement is millisecond-grained.** A worker doing a tight infinite loop blocks its own event loop until the host-side timer terminates it. No interrupt-driven preemption.
-- **No prototype-pollution boundary within an isolate.** Multiple contexts in one isolate share JS prototypes. Use one isolate per tenant.
+- **No prototype-pollution boundary within an isolate.** Multiple contexts in one isolate share JS built-ins (mutating `Date.prototype.toISOString` affects all contexts). Use one isolate per tenant.
 
-## What's planned (Phase 2, deferred)
+## What's planned (Phase 2, in flight)
 
 A `bun:ffi` binding to a standalone `libJavaScriptCore` build. Will replace the Worker backend transparently — same API.
 
-| Capability                   | Phase 1 (now)               | Phase 2 (planned)                            |
-| ---------------------------- | --------------------------- | -------------------------------------------- |
-| Heap isolation               | ✅ via Worker               | ✅ via separate JSC VM                       |
-| CPU timeout                  | ms via `Worker.terminate()` | µs via `JSC::VM::interrupt()`                |
-| Memory cap                   | polled 50ms (soft)          | enforced on-allocate (hard)                  |
-| Host globals (`fetch`, etc.) | reachable inside worker     | not reachable — empty global object          |
-| Prototype isolation          | one isolate per tenant      | per-context, even within an isolate          |
-| Synchronous Reference calls  | not supported (use `await`) | supported via `Atomics.wait` + shared memory |
-
-Phase 1 is enough for most use cases — AI agents, plugin sandboxing, multi-tenant scripting where the tenant trust level is "known user, not adversarial." Phase 2 is when you need Cloudflare-Workers-style hostile-code hardening.
+| Capability                                | Phase 1 (now)                 | Phase 2 (planned)                            |
+| ----------------------------------------- | ----------------------------- | -------------------------------------------- |
+| Heap isolation                            | ✅ via Worker                 | ✅ via separate JSC VM                       |
+| CPU timeout                               | ms via `Worker.terminate()`   | µs via `JSC::VM::interrupt()`                |
+| Memory cap                                | polled 50ms (soft)            | enforced on-allocate (hard)                  |
+| `fetch` / `process` / `Worker` reachable? | **no** (delete + shadow)      | no — sandbox has its own empty global object |
+| `Bun.spawn(...)` reachable?               | **no** (with-block shadow)    | no                                           |
+| `globalThis.Bun` reachable?               | **no** (Object.create shadow) | no                                           |
+| `(0, eval)('Bun')` reachable?             | **yes** (documented residual) | no — sandbox has its own global object       |
+| Prototype isolation                       | one isolate per tenant        | per-context, even within an isolate          |
+| Synchronous Reference calls               | not supported (use `await`)   | supported via `Atomics.wait` + shared memory |
 
 ## API
 

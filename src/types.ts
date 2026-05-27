@@ -24,7 +24,13 @@ export type IsolateOptions = {
    * `bun:jsc.memoryUsage` (soft + millisecond-grained); v2 will enforce via
    * libJSC's heap settings (synchronous, on-allocate).
    *
-   * Defaults to 64 MB.
+   * Defaults to 256 MB. The Bun worker's cold-start heap is ~46 MB steady
+   * state on Bun 1.3.x, but under load (parallel workers, busy host) the
+   * watchdog occasionally measures transient spikes near ~140 MB before
+   * JSC's GC settles. Caps below ~256 MB will sometimes fire the limit
+   * during cold-start and the isolate self-terminates before user code
+   * runs. Use small caps only when you've measured your specific
+   * workload's actual heap profile under realistic load.
    */
   memoryLimit?: number;
   /**
@@ -39,6 +45,33 @@ export type IsolateOptions = {
    * (untrusted code shouldn't pollute host logs). Pass a function to capture.
    */
   onConsole?: (level: "log" | "warn" | "error", args: unknown[]) => void;
+  /**
+   * Strip host-capability globals from the sandbox. Default `true`. When on,
+   * the sandbox cannot reach `fetch`, `Bun`, `process`, `Worker`,
+   * `WebSocket`, `navigator`, host `postMessage`/`addEventListener`, etc.
+   * via bare lookup, `this.X`, `globalThis.X`, or direct `eval(X)`.
+   *
+   * Documented residual: `(0, eval)('Bun')` and `new Function('return Bun')()`
+   * still escape because indirect-eval and the Function constructor run in
+   * the worker's real global scope. Removing them would break async
+   * functions, class generators, and most async libraries. This will close
+   * in the FFI rewrite (v2) where the sandbox has its own global object.
+   *
+   * Pure JS built-ins (Math, JSON, Date, Promise, Map, Set, …) and safe
+   * Web primitives (URL, TextEncoder, crypto.{getRandomValues,randomUUID,subtle},
+   * setTimeout, console) stay reachable.
+   *
+   * Set `false` to keep the v0.0.1 behaviour where the worker's full
+   * globalThis is exposed (useful only for trusted code).
+   */
+  harden?: boolean;
+  /**
+   * When {@link harden} is on, names from the hardened list to keep
+   * reachable anyway. Use sparingly — every entry is an unguarded
+   * capability. Typical use: `['fetch']` for a sandbox that needs to make
+   * HTTP calls but should otherwise be locked down.
+   */
+  unsafelyExposeGlobals?: string[];
 };
 
 /**
@@ -68,8 +101,17 @@ export type Isolate = {
    * Create a fresh execution {@link Context} — a new global scope that shares
    * the isolate's VM but starts with the standard globals only (no leaked
    * host references, no leaked previous-script bindings).
+   *
+   * Optional {@link CreateContextOptions.seed} runs once before the context
+   * returns (use for helper functions, classes, type-defining code that
+   * every script in this context should be able to call). Optional
+   * {@link CreateContextOptions.snapshot} restores data state captured
+   * from a previous context's {@link Context.snapshot} — useful for
+   * carrying accumulated state across context lifecycles (a fresh context
+   * per turn of an AI conversation, for example, with each turn's data
+   * state carried forward).
    */
-  createContext: () => Promise<Context>;
+  createContext: (options?: CreateContextOptions) => Promise<Context>;
 
   /**
    * Snapshot of the isolate's current heap usage in bytes (best-effort —
@@ -85,6 +127,42 @@ export type Isolate = {
   dispose: () => Promise<void>;
 };
 
+/** Per-context construction options. */
+export type CreateContextOptions = {
+  /**
+   * JS source that runs once before the context is returned. Use to define
+   * helper functions, classes, types, or anything else every script in
+   * this context should be able to reference. Runs inside the context's
+   * sandbox, with all the usual hardening applied.
+   *
+   * **Persisting bindings.** The seed runs through the same `with(this) {
+   * eval(source) }` wrapper as a normal `script.run()`, so `var X = …`
+   * declarations scope to the eval frame and DON'T persist into the
+   * sandbox after the seed returns. To persist a binding, assign onto
+   * `this` (which is the sandbox) directly:
+   *
+   * ```js
+   * // ❌ doesn't persist
+   * var double = (x) => x * 2;
+   *
+   * // ✅ persists to the sandbox
+   * this.double = (x) => x * 2;
+   * this.lib = { a: 1, b: 2 };
+   * ```
+   *
+   * (This is a Phase-1 quirk of the with-eval design; the FFI rewrite, Phase
+   * 2, will use a real fresh global object where `var` declarations land
+   * naturally.)
+   */
+  seed?: string;
+  /**
+   * Structured-cloneable own properties to install on the new context's
+   * sandbox before it's returned. Pair with {@link Context.snapshot} to
+   * carry accumulated data state across context lifecycles.
+   */
+  snapshot?: Record<string, unknown>;
+};
+
 /** An execution context within an {@link Isolate} — a fresh global scope. */
 export type Context = {
   readonly isolate: Isolate;
@@ -96,6 +174,18 @@ export type Context = {
   setGlobal: (name: string, value: unknown) => Promise<void>;
   /** Read a global. Returns the value via structured clone. */
   getGlobal: (name: string) => Promise<unknown>;
+  /**
+   * Capture the context's structured-cloneable own properties (the "data
+   * state"). Functions, host {@link Reference}s, and other non-clonable
+   * values are excluded. Pair with {@link CreateContextOptions.snapshot}
+   * to derive a new context from this one's accumulated state.
+   *
+   * Note: this is NOT a JSC heap snapshot (the JSC API doesn't expose that
+   * from outside the VM in a Worker model). It's an "extract the data and
+   * re-derive a new context from it" operation. The {@link
+   * CreateContextOptions.seed} carries the code half.
+   */
+  snapshot: () => Promise<Record<string, unknown>>;
   /** Dispose just this context (the isolate stays alive). */
   dispose: () => Promise<void>;
 };
@@ -118,6 +208,30 @@ export type RunOptions = {
   release?: boolean;
 };
 
+/** Per-run telemetry returned by {@link Script.runWithMetrics}. */
+export type RunMetrics = {
+  /**
+   * Wall-clock duration (ms) of the script body inside the worker — does
+   * NOT include host-side message-passing overhead. Use for "how
+   * expensive was the user's script?" not "how long did the round trip
+   * take?". Sub-millisecond runs round to 0.
+   */
+  cpuMs: number;
+  /**
+   * Heap size (bytes) measured immediately after the script returned.
+   * NOT the run's peak — a true peak would require continuous polling
+   * during execution. Useful for "did this run blow up?" detection and
+   * for usage-based billing approximations.
+   */
+  heapBytes: number;
+};
+
+/** Result returned by {@link Script.runWithMetrics}. */
+export type RunWithMetricsResult<T = unknown> = {
+  result: T;
+  metrics: RunMetrics;
+};
+
 /** A compiled JS script that can be run inside a {@link Context}. */
 export type Script = {
   readonly isolate: Isolate;
@@ -125,8 +239,19 @@ export type Script = {
    * Execute against the given context. Resolves with the script's return
    * value via structured clone. Rejects with a JS error thrown by the script,
    * or {@link TimeoutError} / {@link MemoryLimitError} on resource breaches.
+   *
+   * For per-call telemetry (CPU ms + heap bytes) use {@link runWithMetrics}.
    */
   run: (context: Context, options?: RunOptions) => Promise<unknown>;
+  /**
+   * Same as {@link run} but resolves with `{ result, metrics }`. Failures
+   * still reject with the original error; the metrics are only attached
+   * to successful runs.
+   */
+  runWithMetrics: (
+    context: Context,
+    options?: RunOptions,
+  ) => Promise<RunWithMetricsResult>;
   dispose: () => Promise<void>;
 };
 

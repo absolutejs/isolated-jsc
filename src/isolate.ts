@@ -13,6 +13,7 @@
 import {
   CompileError,
   type Context,
+  type CreateContextOptions,
   ExternalCopy,
   type Isolate,
   type IsolateOptions,
@@ -34,6 +35,10 @@ import type {
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
+  /** Optional out-channel — when set, onWorkerMessage stores the reply's
+   * metrics here before resolving. Used by `runWithMetrics`; ignored by
+   * every other op. */
+  metricsOut?: { current?: { cpuMs: number; heapBytes: number } };
 };
 
 /** Brand: Context → worker-side contextId. Declared up here so the closure in
@@ -111,6 +116,55 @@ const send = <T>(state: IsolateState, request: HostRequest): Promise<T> => {
   });
 };
 
+/** Variant of {@link send} that also captures `metrics` from the worker reply.
+ * Used by `runWithMetrics`. */
+const sendWithMetrics = <T>(
+  state: IsolateState,
+  request: HostRequest,
+): Promise<{ result: T; metrics?: { cpuMs: number; heapBytes: number } }> => {
+  if (state.disposed) {
+    return Promise.reject(state.disposedError ?? new IsolateDisposedError());
+  }
+  return new Promise((resolve, reject) => {
+    const metricsOut: { current?: { cpuMs: number; heapBytes: number } } = {};
+    state.pending.set(request.id, {
+      resolve: (result) =>
+        resolve({ result: result as T, metrics: metricsOut.current }),
+      reject,
+      metricsOut,
+    });
+    state.worker.postMessage(request satisfies HostMessage);
+  });
+};
+
+/** Rebuild a host-side Error from the wire shape. Custom Error subclasses
+ * can't be reconstructed (we don't have their constructors); we approximate
+ * by setting `.name` and copying the captured own properties. instanceof
+ * checks for user-defined subclasses won't work across the boundary — use
+ * `.name === 'FooError'` or `.code === '40001'` etc. instead. */
+const rebuildError = (wire: {
+  name: string;
+  message: string;
+  stack?: string;
+  cause?: { name: string; message: string; stack?: string; cause?: unknown };
+  props?: Record<string, unknown>;
+}): Error => {
+  const error = new Error(wire.message);
+  error.name = wire.name;
+  if (wire.stack !== undefined) error.stack = wire.stack;
+  if (wire.cause !== undefined) {
+    (error as Error & { cause?: unknown }).cause = rebuildError(
+      wire.cause as Parameters<typeof rebuildError>[0],
+    );
+  }
+  if (wire.props !== undefined) {
+    for (const [key, value] of Object.entries(wire.props)) {
+      (error as unknown as Record<string, unknown>)[key] = value;
+    }
+  }
+  return error;
+};
+
 const onWorkerMessage = (state: IsolateState, message: WorkerMessage): void => {
   if ("type" in message) {
     handleEvent(state, message);
@@ -120,13 +174,13 @@ const onWorkerMessage = (state: IsolateState, message: WorkerMessage): void => {
   if (pending === undefined) return;
   state.pending.delete(message.id);
   if (message.ok) {
+    if (pending.metricsOut !== undefined && message.metrics !== undefined) {
+      pending.metricsOut.current = message.metrics;
+    }
     pending.resolve(message.result);
     return;
   }
-  const error = new Error(message.error.message);
-  error.name = message.error.name;
-  if (message.error.stack !== undefined) error.stack = message.error.stack;
-  pending.reject(error);
+  pending.reject(rebuildError(message.error));
 };
 
 const handleEvent = (state: IsolateState, event: WorkerEvent): void => {
@@ -191,7 +245,7 @@ const handleEvent = (state: IsolateState, event: WorkerEvent): void => {
 export const createIsolate = async (
   options: IsolateOptions = {},
 ): Promise<Isolate> => {
-  const memoryLimit = options.memoryLimit ?? 64;
+  const memoryLimit = options.memoryLimit ?? 256;
   const worker = new Worker(workerUrl.href, { type: "module" });
 
   const state: IsolateState = {
@@ -253,6 +307,8 @@ export const createIsolate = async (
     memoryLimitMb: memoryLimit,
     bootstrap: options.bootstrap,
     captureConsole: options.onConsole !== undefined,
+    harden: options.harden !== false,
+    unsafelyExposeGlobals: options.unsafelyExposeGlobals,
   } satisfies HostMessage);
 
   await ready;
@@ -285,9 +341,14 @@ export const createIsolate = async (
       return makeScript(state, isolate, id);
     },
 
-    async createContext(): Promise<Context> {
+    async createContext(options?: CreateContextOptions): Promise<Context> {
       const id = state.nextId++;
-      await send<number>(state, { id, op: "createContext" });
+      await send<number>(state, {
+        id,
+        op: "createContext",
+        seed: options?.seed,
+        snapshot: options?.snapshot,
+      });
       return makeContext(state, isolate, id);
     },
 
@@ -337,6 +398,18 @@ const makeContext = (
       return fromWire(wire);
     },
 
+    async snapshot(): Promise<Record<string, unknown>> {
+      const id = state.nextId++;
+      const wire = await send<WireValue>(state, {
+        id,
+        op: "snapshotContext",
+        contextId,
+      });
+      const value = fromWire(wire);
+      if (value === null || typeof value !== "object") return {};
+      return value as Record<string, unknown>;
+    },
+
     async dispose(): Promise<void> {
       const id = state.nextId++;
       await send<null>(state, { id, op: "disposeContext", contextId });
@@ -346,66 +419,100 @@ const makeContext = (
   return context;
 };
 
+/** Shared timeout-race machinery. Bun 1.3.x sometimes doesn't deliver
+ * pending worker messages while the host parks on a single long
+ * setTimeout, so we poll instead — keeps the event loop hot enough for
+ * messages to flow normally. */
+const raceWithTimeout = async <T>(
+  state: IsolateState,
+  runPromise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> => {
+  runPromise.catch(() => {});
+  let poller: ReturnType<typeof setInterval> | undefined;
+  const deadline = Date.now() + timeoutMs;
+  try {
+    return await Promise.race([
+      runPromise,
+      new Promise<never>((_, reject) => {
+        poller = setInterval(
+          () => {
+            if (Date.now() >= deadline) {
+              const error = new TimeoutError(timeoutMs);
+              if (!state.disposed) {
+                state.disposed = true;
+                failAllPending(state, error);
+                void state.worker.terminate();
+              }
+              reject(error);
+            }
+          },
+          Math.min(25, Math.max(1, Math.floor(timeoutMs / 10))),
+        );
+      }),
+    ]);
+  } finally {
+    if (poller !== undefined) clearInterval(poller);
+  }
+};
+
 const makeScript = (
   state: IsolateState,
   isolate: Isolate,
   scriptId: number,
-): Script => ({
-  isolate,
-
-  async run(context: Context, options: RunOptions = {}): Promise<unknown> {
-    const timeoutMs = options.timeout ?? 1000;
-    const id = state.nextId++;
-
-    const runPromise = send<WireValue>(state, {
-      id,
-      op: "run",
-      contextId: contextIdOf(context),
-      scriptId,
-    });
-    // Pre-attach a noop handler so the loser of the race below doesn't
-    // surface as an unhandled rejection when the timeout wins (and
-    // failAllPending later rejects runPromise on worker.terminate()).
-    runPromise.catch(() => {});
-
-    // We deliberately poll instead of using a single `setTimeout(timeoutMs)`:
-    // when the host parks on one long timer, Bun (1.3.x) sometimes won't
-    // deliver pending worker messages until the timer fires — so quick
-    // replies appear to "vanish" until after the timeout, then race-lose.
-    // A short-interval poll keeps the event loop hot enough for messages
-    // to flow normally and only fires the TimeoutError on actual overrun.
-    let poller: ReturnType<typeof setInterval> | undefined;
-    const deadline = Date.now() + timeoutMs;
-    try {
-      const wire = await Promise.race([
-        runPromise,
-        new Promise<never>((_, reject) => {
-          poller = setInterval(
-            () => {
-              if (Date.now() >= deadline) {
-                const error = new TimeoutError(timeoutMs);
-                if (!state.disposed) {
-                  state.disposed = true;
-                  failAllPending(state, error);
-                  void state.worker.terminate();
-                }
-                reject(error);
-              }
-            },
-            Math.min(25, Math.max(1, Math.floor(timeoutMs / 10))),
-          );
-        }),
-      ]);
-      if (options.release === true) await this.dispose();
-      return fromWire(wire);
-    } finally {
-      if (poller !== undefined) clearInterval(poller);
-    }
-  },
-
-  async dispose(): Promise<void> {
+): Script => {
+  const dispose = async (): Promise<void> => {
     const id = state.nextId++;
     if (state.disposed) return;
     await send<null>(state, { id, op: "disposeScript", scriptId });
-  },
-});
+  };
+
+  return {
+    isolate,
+
+    async run(context: Context, options: RunOptions = {}): Promise<unknown> {
+      const timeoutMs = options.timeout ?? 1000;
+      const id = state.nextId++;
+      const wire = await raceWithTimeout<WireValue>(
+        state,
+        send(state, {
+          id,
+          op: "run",
+          contextId: contextIdOf(context),
+          scriptId,
+        }),
+        timeoutMs,
+      );
+      if (options.release === true) await dispose();
+      return fromWire(wire);
+    },
+
+    async runWithMetrics(context: Context, options: RunOptions = {}) {
+      const timeoutMs = options.timeout ?? 1000;
+      const id = state.nextId++;
+      const { result, metrics } = await raceWithTimeout<{
+        result: WireValue;
+        metrics?: { cpuMs: number; heapBytes: number };
+      }>(
+        state,
+        sendWithMetrics(state, {
+          id,
+          op: "run",
+          contextId: contextIdOf(context),
+          scriptId,
+          withMetrics: true,
+        }),
+        timeoutMs,
+      );
+      if (options.release === true) await dispose();
+      // metrics is always populated on a successful withMetrics=true run;
+      // fall back to zeros only if the worker reply was malformed.
+      return {
+        result: fromWire(result),
+        metrics: metrics ?? { cpuMs: 0, heapBytes: 0 },
+      };
+    },
+
+    dispose,
+  };
+};

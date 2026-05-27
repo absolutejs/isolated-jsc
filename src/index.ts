@@ -6,6 +6,7 @@
  */
 
 export { createIsolate } from "./isolate";
+export { createIsolatePool } from "./pool";
 export {
   CompileError,
   ExternalCopy,
@@ -16,9 +17,13 @@ export {
 } from "./types";
 export type {
   Context,
+  CreateContextOptions,
   CreateIsolate,
   Isolate,
   IsolateOptions,
+  RunMetrics,
   RunOptions,
+  RunWithMetricsResult,
   Script,
 } from "./types";
+export type { IsolatePool, IsolatePoolOptions } from "./pool";
