@@ -101,27 +101,11 @@ const wrapError = (error: unknown): WireError => {
  * can opt into strict per-script by starting with `"use strict"`.
  */
 const compile = (source: string): CompiledScript => {
-  const wrapped = `
-		return (function () {
-			with (this) {
-				try {
-					return Promise.resolve(eval(${JSON.stringify(source)}))
-						.catch(function (e) {
-							return { __isolatedJscThrow: e };
-						});
-				} catch (e) {
-					return { __isolatedJscThrow: e };
-				}
-			}
-		}).call(sandbox);
-	`;
+  // Simple, idiomatic: eval inside with(sandbox), let throws propagate.
+  // The outer dispatcher's try/catch turns them into error replies.
+  const wrapped = `return (function () { with (this) { return eval(${JSON.stringify(source)}); } }).call(sandbox);`;
   return new Function("sandbox", wrapped) as CompiledScript;
 };
-
-const isThrowSentinel = (
-  value: unknown,
-): value is { __isolatedJscThrow: unknown } =>
-  value !== null && typeof value === "object" && "__isolatedJscThrow" in value;
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
@@ -178,14 +162,6 @@ const startMemoryWatchdog = (): void => {
 const handleInit = (message: WorkerInitMessage): void => {
   memoryLimitMb = message.memoryLimitMb;
   if (message.captureConsole) installConsoleCapture();
-  // Pre-warm `eval`. Bun's worker drops the next outgoing postMessage if
-  // it follows the worker's first ever eval-throw; running and catching
-  // a throw here moves the first-eval-throw out of the user's path.
-  try {
-    new Function('return eval("throw new Error(\\"prewarm\\")")')();
-  } catch {
-    /* expected — that's the point */
-  }
   if (typeof message.bootstrap === "string" && message.bootstrap.length > 0) {
     try {
       new Function(message.bootstrap)();
@@ -276,13 +252,6 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (sandbox === undefined)
             throw new Error(`unknown contextId ${request.contextId}`);
           const result = await script(sandbox);
-          if (isThrowSentinel(result)) {
-            // User script threw — re-throw here so the outer
-            // catch turns it into an error reply. (The script
-            // wrapper caught it inside the eval frame so the
-            // throw never crosses an eval boundary in the worker.)
-            throw result.__isolatedJscThrow;
-          }
           return {
             id: request.id,
             ok: true,

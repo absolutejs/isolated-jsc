@@ -9,10 +9,10 @@ import {
 
 /**
  * Capture the rejection of a promise as a value. We do NOT use Bun-test's
- * `await expect(p).rejects.toThrow(...)`: that pattern parks the host on a
- * single long timer that prevents Bun's cross-worker message delivery from
- * flushing (Bun 1.3.x bug; see ISSUES_WILL_CLOSE.md). Plain try/catch keeps
- * the host event loop hot.
+ * `await expect(p).rejects.toThrow(...)`: that matcher hangs to test timeout
+ * on cross-worker postMessage replies — see UPSTREAM_ISSUES.md for the
+ * tracking Bun issues (#5602 + #14670 + #19130) and the cleanup steps once
+ * one of them lands.
  */
 const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
   try {

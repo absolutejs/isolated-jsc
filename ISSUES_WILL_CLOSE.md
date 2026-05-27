@@ -31,41 +31,6 @@ These are the gaps in Bun's runtime that `@absolutejs/isolated-jsc` fills.
 - What they want: a Bun-native way to run untrusted AI-generated code with hard resource limits + heap isolation. The single largest growing use case for runtime sandboxing in 2026.
 - What we ship: exactly this. The Worker-backed v1 already serves trusted-tenant cases; the libJSC-FFI v2 (future) will harden it for fully adversarial AI-generated code.
 
-## Bugs we hit during v0 development (worth filing on Bun)
-
-We hit these building v0; each forced a workaround we should remove once Bun
-fixes the underlying issue.
-
-### Bun 1.3.14 — `bun test` + `await expect(promise).rejects.toThrow(...)` starves cross-worker message delivery
-
-- Reproduced: 2026-05-26 on Bun 1.3.14, JSC build.
-- Symptom: when a test uses `await expect(promise).rejects.toThrow(X)` and
-  the promise is one that resolves via a cross-worker `postMessage` reply,
-  the host's worker message queue stops flushing while the await is parked.
-  The worker logs show `postMessage` returns successfully; the host never
-  receives the message until either (a) the test's overall timer fires
-  (terminating the worker — too late) or (b) we replace the matcher.
-- Reduced repro: ~30 lines, see `tests/repro/bun-rejects-toThrow.txt` (TODO
-  — extract from our `tests/smoke.test.ts` history).
-- Our workaround: a `rejection(promise)` helper that uses plain
-  `try`/`catch` instead. Works in 100% of cases the matcher silently hangs.
-- Not reproducible: outside `bun test` (standalone Bun scripts deliver the
-  same messages in ~1 ms). Specific to the test-runner host loop's
-  scheduling decisions while parked on the matcher.
-
-### Bun 1.3.14 — eval-throw inside a worker silently breaks the outgoing message channel under some host wait patterns
-
-- Reproduced: 2026-05-26 on Bun 1.3.14.
-- Symptom: if user code passed to `new Function(...)` throws _through an
-  `eval()`_ and the host is parked on `setTimeout(timeoutMs)` (single long
-  timer), the worker's subsequent outgoing `postMessage`s never arrive.
-- Our workaround: in the compiled wrapper, catch the user-script throw
-  inside the eval frame and return a `{ __isolatedJscThrow: error }`
-  sentinel; never let the throw cross the eval boundary inside the worker.
-  The host's run loop already polls for completion in short intervals (the
-  same code path as the `expect.rejects` workaround above) so this combined
-  with the sentinel keeps the channel healthy.
-
 ## Related Bun bugs we don't fix but should be aware of
 
 These are sandbox-adjacent issues where the failure is in Bun core, not in user
