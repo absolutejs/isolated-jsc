@@ -7,6 +7,15 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
+export { CapabilityError, createCapabilityBroker } from "./capabilities";
+export type {
+  CapabilityAuditEvent,
+  CapabilityAuditStatus,
+  CapabilityBroker,
+  CapabilityBrokerOptions,
+  CapabilityTool,
+  CapabilityValidator,
+} from "./capabilities";
 export { JscLibraryNotFoundError, resolveJscLibrary } from "./ffi/resolver";
 export type { JscFlavor, JscLibraryProbe } from "./ffi/resolver";
 export {

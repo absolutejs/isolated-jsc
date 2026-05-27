@@ -88,6 +88,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 
 ```ts
 import {
+  createCapabilityBroker,
   compileTypeScriptCallable,
   createIsolate,
   Reference,
@@ -130,6 +131,18 @@ const handler = await compileTypeScriptCallable(
   "async (name: string): Promise<string> => name.trim().toUpperCase()",
 );
 await handler.call([" alex "]); // "ALEX"
+
+const broker = createCapabilityBroker(
+  {
+    lookupOrder: {
+      timeoutMs: 250,
+      validateInput: (input) => String(input),
+      handler: async (id, tenant) => await lookupOrder(tenant.id, id),
+    },
+  },
+  { context: { id: "tenant_123" } },
+);
+await context.setGlobal("tools", broker.reference);
 
 await isolate.dispose();
 ```

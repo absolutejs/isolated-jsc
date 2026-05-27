@@ -133,35 +133,14 @@ Avoid overclaiming:
   Worker, Bun process-spawn, and optional Node `isolated-vm` baselines.
 - 2026-05-27: Added TypeScript execution helpers that use Bun native
   transpilation before compiling scripts/callables for isolate execution.
+- 2026-05-27: Added capability broker primitives for named host tools with
+  validation hooks, timeouts, concurrency limits, tenant context, and audit events.
 
 ## Current Product Gaps
 
 Highest leverage dev work before a stronger public push:
 
-1. **Bun migration guide**
-
-   - "Moving from Node `isolated-vm` to Bun `isolated-jsc`."
-   - Map `Isolate`, `Context`, `Script`, `Reference`, `ExternalCopy`,
-     timeouts, metrics, and unsupported differences.
-
-2. **Security model doc**
-
-   - Threat model table: trusted plugin, semi-trusted tenant script,
-     arbitrary hostile code.
-   - Explicit backend differences.
-   - Hardening checklist: separate process, uid/container, network egress
-     policy, secret broker, rate limits, max concurrency.
-
-3. **Capability broker primitives**
-
-   - Standard helper for defining host tools with:
-     - schema validation
-     - timeout per tool call
-     - concurrency limits
-     - structured audit log
-     - optional tenant context injection
-
-4. **Package ergonomics**
+1. **Package ergonomics**
    - Improve install detection and error messages for Linux JSC packages.
    - Add `isolated-jsc doctor`.
    - Add a tiny `bun run examples/agent-tool.ts` demo.
@@ -177,7 +156,8 @@ Ship:
 - `BENCHMARKS.md` with reproducible scripts and competitor baselines.
 - `SECURITY.md` with honest threat model and hardening guidance.
 - `MIGRATING_FROM_ISOLATED_VM.md`.
-- TypeScript execution helper or documented recipe.
+- TypeScript execution helpers.
+- Capability broker primitives for named host tools.
 - One agent-tool demo that mirrors how `@absolutejs/sync` uses
   `sandboxedHandler`.
 

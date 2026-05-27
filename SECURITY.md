@@ -102,6 +102,7 @@ const result = await script.run(context, { timeout: 500 });
 
 Rules of thumb:
 
+- Prefer `createCapabilityBroker()` for named host tools that need validation, per-tool timeouts, concurrency limits, tenant context injection, and audit events.
 - Pass `Reference` functions, not raw host objects.
 - Validate every input at the host boundary.
 - Put authorization checks inside the host capability, not inside tenant code.
