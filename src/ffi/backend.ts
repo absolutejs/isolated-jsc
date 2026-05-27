@@ -21,7 +21,14 @@
  * for that context. We disable when `harden !== false`.
  */
 
-import { JSCallback, FFIType, ptr, type Pointer } from "bun:ffi";
+import {
+  JSCallback,
+  FFIType,
+  ptr,
+  read,
+  toArrayBuffer,
+  type Pointer,
+} from "bun:ffi";
 import {
   CompileError,
   type Context,
@@ -78,6 +85,9 @@ type IsolateFfiState = {
   scripts: Map<number, { source: string; sourceUrl: string }>;
   /** Refs: map refId → host fn for the Reference call-through machinery. */
   refs: Map<number, (...args: unknown[]) => unknown>;
+  /** JSCallbacks for each Reference's `callAsFunction` — kept alive for the
+   * isolate's lifetime; closed on dispose to free the C-side thunks. */
+  referenceCallbacks: JSCallback[];
   nextContextId: number;
   nextScriptId: number;
   nextRefId: number;
@@ -290,6 +300,7 @@ export const createIsolateFfi = async (
     contexts: new Map(),
     scripts: new Map(),
     refs: new Map(),
+    referenceCallbacks: [],
     nextContextId: 1,
     nextScriptId: 1,
     nextRefId: 1,
@@ -427,6 +438,11 @@ export const createIsolateFfi = async (
       state.contexts.clear();
       symbols.JSContextGroupRelease(group);
       state.watchdogCallback?.close();
+      // Free C-side thunks for every Reference callback. After this point
+      // any leftover JS-land reference to one of these functions would
+      // segfault if invoked — but the contexts are gone, so they can't be.
+      for (const cb of state.referenceCallbacks) cb.close();
+      state.referenceCallbacks.length = 0;
     },
   };
 
@@ -550,27 +566,286 @@ const makeFfiContext = (
   return context;
 };
 
-/** Stub for now — installs a JS function that always rejects. Wiring the
- * full JSClassCreate / deferred-promise bridge is the next FFI step.
- * Returning a function-shaped JSValue lets non-Reference tests pass
- * without crashing the type system. */
+/**
+ * Build a JS function that JSC will invoke our `JSCallback` for. Each
+ * Reference gets its own `JSCallback` — captures the host fn in its closure,
+ * so there's no need for the JSClassCreate / `JSObjectGetPrivate` round-trip.
+ * The cost is one `JSCallback` alloc per Reference, which is fine for any
+ * sane number of References (the existing test suites use single-digit
+ * counts; even an AI tool that registers N tools per turn is tens).
+ *
+ * Calling convention:
+ *
+ *   - **Synchronous host fns** return immediately; result goes back via the
+ *     normal `JSValueRef` return.
+ *   - **Promise-returning host fns** are wrapped in `JSObjectMakeDeferredPromise`:
+ *     we return the promise to JS-land, then await the host promise and
+ *     call its `resolve` / `reject` when it settles. JSC drains microtasks
+ *     between `JSEvaluateScript` boundaries, so a JS `await` will wake the
+ *     continuation correctly IF the host promise settles synchronously
+ *     within the callback (which is the common case for in-process work).
+ *     Async settling that requires the JS event loop to spin during
+ *     `JSEvaluateScript` is **not** supported in 0.3 — see the JSDoc on
+ *     {@link Reference} for the documented limit.
+ *
+ *   - Host fn throws → exception out-param is populated with a JSValueRef
+ *     wrapping the host error; user code sees a thrown JS Error.
+ */
 const makeReferenceFunction = (
   state: IsolateFfiState,
   ctx: bigint,
   ref: Reference<(...args: unknown[]) => unknown>,
 ): bigint => {
-  // Allocate a refId so callers can later identify which Reference this
-  // function represents (needed once we wire the callAsFunction callback).
+  const s = state.symbols;
   const refId = state.nextRefId++;
   state.refs.set(refId, ref.fn);
-  // For now, install a JS-side stub that just throws — better than silently
-  // returning undefined. Tests that use Reference will fail loudly with a
-  // clear message until the callAsFunction wiring lands.
-  return hostToJs(
-    state.symbols,
-    ctx,
-    `[Reference id=${refId}; FFI backend Reference call-through not yet implemented; use backend: 'worker']`,
+
+  // Write a host error into the JSC exception out-param so user code sees
+  // a thrown Error rather than a silent undefined return.
+  const writeException = (
+    ctxArg: bigint,
+    excPtr: bigint,
+    error: unknown,
+  ): void => {
+    if (excPtr === 0n) return;
+    const message = error instanceof Error ? error.message : String(error);
+    const messageJs = makeJsString(s, message);
+    const messageValue = s.JSValueMakeString(ctxArg, messageJs);
+    s.JSStringRelease(messageJs);
+    // JSObjectMakeError(ctx, argCount, args[], exception) constructs a
+    // real JS Error object whose .message is the first arg.
+    const argsBuf = new BigUint64Array([messageValue]);
+    const innerExc = new BigUint64Array(1);
+    const errObj = s.JSObjectMakeError(
+      ctxArg,
+      1n,
+      BigInt(ptr(argsBuf)),
+      BigInt(ptr(innerExc)),
+    );
+    // Write the error JSObjectRef into the 8 bytes at excPtr. JSC reads
+    // the out-param immediately after the callback returns, so a
+    // synchronous write here is what surfaces the throw to user code.
+    try {
+      const buffer = toArrayBuffer(Number(excPtr) as unknown as Pointer, 0, 8);
+      new BigUint64Array(buffer)[0] = errObj;
+    } catch (writeErr) {
+      if (process.env.ISOJSC_DEBUG === "1") {
+        // eslint-disable-next-line no-console
+        console.error("[isolated-jsc] writeException failed:", writeErr);
+      }
+    }
+  };
+
+  // Read `argc` JSValueRef pointers from `argv` (each 8 bytes).
+  const readArgs = (argc: bigint, argv: bigint): bigint[] => {
+    const n = Number(argc);
+    if (n === 0 || argv === 0n) return [];
+    const out: bigint[] = [];
+    // Bun's `read.u64` types its first arg as the opaque `Pointer`; in
+    // practice it accepts a number address. Cast through `unknown`.
+    const base = Number(argv) as unknown as Pointer;
+    for (let i = 0; i < n; i++) {
+      out.push(read.u64(base, i * 8));
+    }
+    return out;
+  };
+
+  // The actual JSC callback. Synchronous from JSC's POV.
+  const callback = new JSCallback(
+    (
+      cbCtx: Pointer,
+      _fn: Pointer,
+      _thisObj: Pointer,
+      argc: bigint,
+      argv: bigint,
+      excPtr: bigint,
+    ): bigint => {
+      const ctxArg = BigInt(cbCtx as unknown as number);
+      try {
+        const jsArgs = readArgs(argc, argv);
+        const hostArgs = jsArgs.map((v) => jsToHost(s, ctxArg, v));
+        const result = ref.fn(...hostArgs);
+        // Promise-returning host fn → wrap with DeferredPromise.
+        if (
+          result !== null &&
+          typeof result === "object" &&
+          typeof (result as Promise<unknown>).then === "function"
+        ) {
+          const resolveOut = new BigUint64Array(1);
+          const rejectOut = new BigUint64Array(1);
+          const innerExc = new BigUint64Array(1);
+          const promise = s.JSObjectMakeDeferredPromise(
+            ctxArg,
+            BigInt(ptr(resolveOut)),
+            BigInt(ptr(rejectOut)),
+            BigInt(ptr(innerExc)),
+          );
+          const resolveFn = resolveOut[0]!;
+          const rejectFn = rejectOut[0]!;
+          (result as Promise<unknown>).then(
+            (settled) => {
+              const settledJs = hostToJs(s, ctxArg, settled);
+              const argsBuf = new BigUint64Array([settledJs]);
+              const callExc = new BigUint64Array(1);
+              s.JSObjectCallAsFunction(
+                ctxArg,
+                resolveFn,
+                0n,
+                1n,
+                BigInt(ptr(argsBuf)),
+                BigInt(ptr(callExc)),
+              );
+            },
+            (err) => {
+              const errJs = hostToJs(
+                s,
+                ctxArg,
+                err instanceof Error ? err.message : String(err),
+              );
+              const argsBuf = new BigUint64Array([errJs]);
+              const callExc = new BigUint64Array(1);
+              s.JSObjectCallAsFunction(
+                ctxArg,
+                rejectFn,
+                0n,
+                1n,
+                BigInt(ptr(argsBuf)),
+                BigInt(ptr(callExc)),
+              );
+            },
+          );
+          return promise;
+        }
+        // Synchronous host fn: marshall result and return immediately.
+        return hostToJs(s, ctxArg, result);
+      } catch (error) {
+        writeException(ctxArg, excPtr, error);
+        return s.JSValueMakeUndefined(ctxArg);
+      }
+    },
+    {
+      args: [
+        FFIType.pointer,
+        FFIType.pointer,
+        FFIType.pointer,
+        FFIType.u64,
+        FFIType.u64,
+        FFIType.u64,
+      ],
+      returns: FFIType.u64,
+    },
   );
+
+  // Track the callback so we can close() it on isolate dispose. Otherwise
+  // each Reference leaks its thunk allocation for the process lifetime.
+  state.referenceCallbacks.push(callback);
+
+  // Bun's `JSCallback.ptr` is a number (function pointer); JSC expects a
+  // void* — pass as bigint via u64.
+  const nameJs = makeJsString(s, `[isolatedJsc Reference #${refId}]`);
+  const cbPtr = callback.ptr;
+  if (cbPtr === null || cbPtr === undefined) {
+    s.JSStringRelease(nameJs);
+    throw new Error("JSCallback failed to allocate");
+  }
+  const fn = s.JSObjectMakeFunctionWithCallback(ctx, nameJs, BigInt(cbPtr));
+  s.JSStringRelease(nameJs);
+  return fn;
+};
+
+/** Counter for unique global names used by the Promise-unwrap helper.
+ * Module-scope so the names stay unique across all isolates (cheap; just
+ * an int). The names are written into the sandbox global object, so they
+ * could theoretically collide with user code; the `__isolatedJsc_` prefix
+ * makes a real collision very unlikely. */
+let unwrapCounter = 0;
+
+/** If `value` is a JS Promise, drive it to settlement via two follow-up
+ * `JSEvaluateScript` calls (JSC drains microtasks between calls). Returns
+ * the resolved value or throws the rejection. If the Promise hasn't settled
+ * after the drain — i.e. it's waiting on real async work — throws a clear
+ * error pointing the caller at the Worker backend. */
+const unwrapResultPromise = (
+  state: IsolateFfiState,
+  ctx: bigint,
+  value: bigint,
+): unknown => {
+  const s = state.symbols;
+  if (value === 0n || !s.JSValueIsObject(ctx, value)) {
+    return jsToHost(s, ctx, value);
+  }
+  // Probe: does `value.then` exist and is it a function? Cheap to check via
+  // a tiny eval that wires up the .then continuation. If `.then` is absent
+  // the eval throws, which we catch and treat as "not a Promise."
+  const id = ++unwrapCounter;
+  const stashName = `__isolatedJsc_promise_${id}`;
+  const stateName = `__isolatedJsc_state_${id}`;
+  // Install the JSValueRef under our temp global. JSObjectSetProperty
+  // doesn't need the property to pre-exist.
+  const global = s.JSContextGetGlobalObject(ctx);
+  const stashKey = makeJsString(s, stashName);
+  const setExc = new BigUint64Array(1);
+  s.JSObjectSetProperty(ctx, global, stashKey, value, 0, BigInt(ptr(setExc)));
+  s.JSStringRelease(stashKey);
+
+  try {
+    evalAndCheck(
+      state,
+      ctx,
+      `if (${stashName} && typeof ${stashName}.then === 'function') {
+        var ${stateName} = { done: false };
+        ${stashName}.then(
+          (v) => { ${stateName} = { done: true, ok: true, value: v }; },
+          (e) => { ${stateName} = { done: true, ok: false, error: e && e.message ? e.message : String(e) }; },
+        );
+      } else {
+        var ${stateName} = { done: true, ok: true, value: ${stashName}, notPromise: true };
+      }`,
+      `<unwrap-setup-${id}>`,
+    );
+    const stateRef = evalAndCheck(
+      state,
+      ctx,
+      `JSON.stringify(${stateName})`,
+      `<unwrap-read-${id}>`,
+    );
+    const stateJson = jsToHost(s, ctx, stateRef) as string;
+    const parsed = JSON.parse(stateJson) as {
+      done: boolean;
+      ok: boolean;
+      value?: unknown;
+      error?: string;
+      notPromise?: boolean;
+    };
+    if (parsed.notPromise === true) {
+      // Wasn't a Promise after all; return the value directly.
+      return parsed.value;
+    }
+    if (!parsed.done) {
+      throw new Error(
+        "FFI backend cannot unwrap a Promise that doesn't settle synchronously. " +
+          "Async host work (setTimeout, real I/O, network calls inside a " +
+          "Reference) needs the Worker backend. Pass `{ backend: 'worker' }` " +
+          "to createIsolate for this isolate.",
+      );
+    }
+    if (!parsed.ok) {
+      throw new Error(parsed.error ?? "promise rejected with unknown error");
+    }
+    return parsed.value;
+  } finally {
+    // Best-effort cleanup of the stash globals.
+    try {
+      evalAndCheck(
+        state,
+        ctx,
+        `delete globalThis['${stashName}']; delete globalThis['${stateName}'];`,
+        `<unwrap-cleanup-${id}>`,
+      );
+    } catch {
+      // If cleanup fails, the names linger on globalThis but harm nothing.
+    }
+  }
 };
 
 const makeFfiScript = (
@@ -609,9 +884,17 @@ const makeFfiScript = (
       }
       throw error;
     }
+    // If the script returned a Promise, unwrap it. JSC drains microtasks
+    // between successive JSEvaluateScript calls, so a synchronously-
+    // settling Promise (the common case — most user code is `(async () =>
+    // ...)()` where every inner await resolves sync) will have fired its
+    // continuation by the time the second eval runs. Promises that settle
+    // asynchronously (setTimeout, real I/O the FFI backend doesn't
+    // currently bridge) will throw a clear error.
+    const value = unwrapResultPromise(state, ctx, result);
     const cpuMs = performance.now() - startedAt;
     const heapBytes = await isolate.heapSizeBytes();
-    return { value: jsToHost(state.symbols, ctx, result), cpuMs, heapBytes };
+    return { value, cpuMs, heapBytes };
   };
 
   const script: Script = {

@@ -33,7 +33,7 @@ This leaves an entire category of applications stranded on Node:
 
 `@absolutejs/isolated-jsc` fills that gap. See [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_ and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed).
 
-## What ships today (v0.2.0)
+## What ships today (v0.3.0)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -48,7 +48,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Wall-clock timeouts.** `script.run(context, { timeout: 500 })` — millisecond accuracy, enforced from the host via `Worker.terminate()`. v1 trade-off: timeout terminates the entire isolate (pool at the app layer if you need to recycle).
 - **Memory limits.** Soft cap polled every 50 ms via `bun:jsc.memoryUsage()`. Breach posts a fatal and self-terminates; the host rejects pending ops with `MemoryLimitError`.
 - **Hardened sandbox by default (T2.1, new in 0.1).** Host-capability globals — `fetch`, `Bun`, `process`, `Worker`, `WebSocket`, host `postMessage` / `addEventListener`, `navigator`, storage, … — are stripped from the sandbox. User code can't reach them via bare lookup, `globalThis.X`, `this.X`, or direct `eval('X')`. Pure JS built-ins (Math, JSON, Promise, the typed-array suite) and safe Web primitives (URL, TextEncoder, Web Crypto, setTimeout, console) stay reachable. Opt out per-isolate via `harden: false` for trusted code, or expose specific capabilities via `unsafelyExposeGlobals: ['fetch']`.
-- **Host-callable `Reference`s.** Expose host functions to the isolate. Calls round-trip via async message-passing (await on the isolate side).
+- **Host-callable `Reference`s.** Expose host functions to the isolate. Worker backend: calls always round-trip via async message-passing (use `await` on the isolate side). FFI backend (0.3+): sync host fns return their value directly through a per-Reference `JSCallback`; Promise-returning host fns that need real async settling (`setTimeout`, real I/O) require the Worker backend and surface a clear error pointing there.
 - **`ExternalCopy`** for marking large host-side values for cheap pass-through.
 - **Optional console capture.** `onConsole` hook to route isolate `console.log` calls back to the host (default: dropped, so untrusted code can't pollute host logs).
 - **First-class isolate pool (T2.2, new in 0.1).** `createIsolatePool({ isolate, maxSize, idleMs, recycleAfter })` returns a keyed pool — lazy spawn per key, reuse across calls, LRU eviction at cap, transparent re-spawn after isolate self-termination, configurable post-N-call recycle to bound JSC heap creep. Replaces the bespoke per-tenant lookup-or-spawn map every consumer rolls.
@@ -72,7 +72,8 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 | Cold heap                                                      | ~300 KB                                                            | ~46 MB                                  |
 | Timeout behaviour                                              | TerminationException thrown into script; **isolate keeps running** | isolate dies, must respawn              |
 | Memory cap                                                     | watchdog-polled `heapCapacity`; terminates on overage              | polled 50 ms; terminates whole isolate  |
-| Synchronous Reference calls                                    | not supported (use `await`)                                        | not supported (use `await`)             |
+| Sync host fns via Reference                                    | **supported** (direct return)                                      | always wrapped in `await`               |
+| Async (`Promise`) host fns via Reference                       | unsupported — error points at Worker                               | supported via `await`                   |
 | Prototype isolation across contexts                            | one isolate per tenant                                             | one isolate per tenant                  |
 
 ### Installation note for the FFI backend
