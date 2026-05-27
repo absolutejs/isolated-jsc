@@ -33,7 +33,7 @@ This leaves an entire category of applications stranded on Node:
 
 `@absolutejs/isolated-jsc` fills that gap. See [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_ and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed).
 
-## What ships today (v0.3.0)
+## What ships today (v0.6.0)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -98,7 +98,7 @@ import {
 
 // Create an isolate (one per untrusted tenant).
 const isolate: Isolate = await createIsolate({
-  memoryLimit: 64, // MB; default 64
+  memoryLimit: 256, // MB; default 256
   bootstrap: "var foo = 1", // optional — runs once in the worker
   onConsole: (level, args) => console.log(`[iso/${level}]`, ...args),
 });

@@ -118,10 +118,8 @@ describe("createIsolate", () => {
   });
 
   test("heap usage is reported in bytes", async () => {
-    // Default memoryLimit is 64 MB. Starting heap (built-ins + the
-    // sandboxPrototype carrying ~100 safe globals) is in the low double-
-    // digit MB on JSC. Assert against a generous ceiling — the point is
-    // "the reading isn't junk", not "the cold start is small".
+    // Default memoryLimit is 256 MB. Assert against that ceiling — the point
+    // is "the reading isn't junk", not "the cold start is small".
     const isolate = await createIsolate({ memoryLimit: 256 });
     const bytes = await isolate.heapSizeBytes();
     expect(bytes).toBeGreaterThan(0);

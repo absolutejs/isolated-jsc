@@ -44,9 +44,7 @@ describe("Context.compileCallable", () => {
   test("compiles and calls an async function (returns a Promise)", async () => {
     isolate = await createIsolate();
     const ctx = await isolate.createContext();
-    const fn = await ctx.compileCallable(
-      "async (x) => { return x + 1; }",
-    );
+    const fn = await ctx.compileCallable("async (x) => { return x + 1; }");
     expect(await fn.call([41])).toBe(42);
   });
 
@@ -121,7 +119,7 @@ describe("Context.compileCallable", () => {
   });
 
   test("reuses the isolate + context across many calls (functional)", async () => {
-    isolate = await createIsolate({ memoryLimit: 64 });
+    isolate = await createIsolate();
     const ctx = await isolate.createContext();
     const fn = await ctx.compileCallable("(x) => x * 2");
     const results: number[] = [];
@@ -155,7 +153,9 @@ describe("Context.compileCallable", () => {
   test("callWithMetrics returns cpuMs + heapBytes", async () => {
     isolate = await createIsolate();
     const ctx = await isolate.createContext();
-    const fn = await ctx.compileCallable("(n) => { let s = 0; for (let i = 0; i < n; i++) s += i; return s; }");
+    const fn = await ctx.compileCallable(
+      "(n) => { let s = 0; for (let i = 0; i < n; i++) s += i; return s; }",
+    );
     const { result, metrics } = await fn.callWithMetrics([1000]);
     expect(result).toBe(499500);
     expect(metrics.cpuMs).toBeGreaterThanOrEqual(0);
