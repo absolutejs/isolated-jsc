@@ -2,6 +2,13 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.7.3 - 2026-05-27
+
+### Changed
+
+- Added this changelog to the package repo and linked it from the README.
+- Added `CHANGELOG.md` to published package files so npm tarballs include release history.
+
 ## 0.7.2 - 2026-05-27
 
 ### Added
