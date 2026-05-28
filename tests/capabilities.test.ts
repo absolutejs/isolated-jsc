@@ -147,6 +147,7 @@ describe("createCapabilityBroker", () => {
           concurrency: 2,
           description: "Read one order by id for the current tenant",
           input: { name: "LookupOrderInput" },
+          maxOutputBytes: 1024,
           output: "Order | null",
           risk: "read-only",
           timeoutMs: 250,
@@ -171,6 +172,7 @@ describe("createCapabilityBroker", () => {
         hasInputValidator: true,
         hasOutputValidator: true,
         input: { name: "LookupOrderInput" },
+        maxOutputBytes: 1024,
         name: "lookupOrder",
         output: "Order | null",
         redactsInput: false,
@@ -236,6 +238,68 @@ describe("createCapabilityBroker", () => {
     expect(audit[0]?.input).toEqual({ token: "sk_..." });
     expect(audit[1]?.input).toEqual({ token: "sk_..." });
     expect(audit[1]?.output).toEqual({ value: "[redacted]" });
+  });
+
+  test("enforces per-tool output byte limits before returning to the sandbox", async () => {
+    const audit: CapabilityAuditEvent[] = [];
+    const broker = createCapabilityBroker(
+      {
+        large: defineCapabilityTool<undefined, string, undefined>({
+          maxOutputBytes: 16,
+          validateInput: () => undefined,
+          handler: () => "x".repeat(64),
+        }),
+      },
+      { context: undefined, onAudit: (event) => audit.push(event) },
+    );
+
+    const error = (await expectError(
+      broker.call("large"),
+    )) as CapabilityError & {
+      maxOutputBytes?: number;
+      observedBytes?: number;
+    };
+
+    expect(error).toBeInstanceOf(CapabilityError);
+    expect(error.code).toBe("CAPABILITY_OUTPUT_SIZE_LIMIT");
+    expect(error.maxOutputBytes).toBe(16);
+    expect(error.observedBytes).toBeGreaterThan(16);
+    expect(audit.map((event) => event.status)).toEqual(["start", "error"]);
+    expect(audit.at(-1)?.error).toBe(error);
+  });
+
+  test("uses broker-level default output byte limits", async () => {
+    const broker = createCapabilityBroker(
+      {
+        small: { handler: () => "ok" },
+        large: { handler: () => "x".repeat(64) },
+      },
+      { context: undefined, defaultMaxOutputBytes: 16 },
+    );
+
+    expect(await broker.call("small")).toBe("ok");
+    const error = (await expectError(broker.call("large"))) as CapabilityError;
+    expect(error.code).toBe("CAPABILITY_OUTPUT_SIZE_LIMIT");
+    expect(broker.manifest()).toEqual([
+      {
+        hasInputValidator: false,
+        hasOutputValidator: false,
+        maxOutputBytes: 16,
+        name: "small",
+        redactsInput: false,
+        redactsOutput: false,
+        risk: "unknown",
+      },
+      {
+        hasInputValidator: false,
+        hasOutputValidator: false,
+        maxOutputBytes: 16,
+        name: "large",
+        redactsInput: false,
+        redactsOutput: false,
+        risk: "unknown",
+      },
+    ]);
   });
 
   test("uses broker-level audit redaction for rejections", async () => {

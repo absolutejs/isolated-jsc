@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.9 - 2026-05-28
+
+### Added
+
+- Added capability output size limits. Tools now support `maxOutputBytes`, brokers support `defaultMaxOutputBytes`, manifests show the effective cap, and oversized host-tool outputs reject with `CapabilityError` code `CAPABILITY_OUTPUT_SIZE_LIMIT` before returning to sandbox code.
+
 ## 0.8.8 - 2026-05-28
 
 ### Fixed

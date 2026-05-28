@@ -1,4 +1,5 @@
 import { Reference } from "./types";
+import { estimateResultBytes } from "./resultLimits";
 
 export type CapabilityAuditStatus =
   | "start"
@@ -73,6 +74,7 @@ export type CapabilityManifestEntry = {
   hasInputValidator: boolean;
   hasOutputValidator: boolean;
   input?: CapabilitySchemaDescriptor;
+  maxOutputBytes?: number;
   name: string;
   output?: CapabilitySchemaDescriptor;
   redactsInput?: boolean;
@@ -90,6 +92,7 @@ export type CapabilityTool<
   description?: string;
   handler: (input: TInput, context: TContext) => TOutput | Promise<TOutput>;
   input?: CapabilitySchemaDescriptor;
+  maxOutputBytes?: number;
   output?: CapabilitySchemaDescriptor;
   redactAuditInput?: CapabilityAuditRedactor<TContext>;
   redactAuditOutput?: CapabilityAuditRedactor<TContext>;
@@ -165,6 +168,7 @@ export function defineCapabilityTool(
 export type CapabilityBrokerOptions<TContext = unknown> = {
   context: TContext;
   defaultConcurrency?: number;
+  defaultMaxOutputBytes?: number;
   defaultTimeoutMs?: number;
   onAudit?: (event: CapabilityAuditEvent<TContext>) => void;
   redactAuditInput?: CapabilityAuditRedactor<TContext>;
@@ -191,6 +195,35 @@ export class CapabilityError extends Error {
 
 const now = () => performance.now();
 const REDACTION_FAILED = "[audit redaction failed]";
+
+const outputSizeError = (
+  tool: string,
+  maxOutputBytes: number,
+  observedBytes: number,
+): CapabilityError => {
+  const error = new CapabilityError(
+    tool,
+    "CAPABILITY_OUTPUT_SIZE_LIMIT",
+    `Capability "${tool}" output size (${observedBytes} bytes) exceeded the ${maxOutputBytes} byte limit`,
+  ) as CapabilityError & {
+    maxOutputBytes?: number;
+    observedBytes?: number;
+  };
+  error.maxOutputBytes = maxOutputBytes;
+  error.observedBytes = observedBytes;
+  return error;
+};
+
+const enforceOutputSize = (
+  tool: string,
+  output: unknown,
+  maxOutputBytes: number | undefined,
+): void => {
+  if (maxOutputBytes === undefined) return;
+  const observedBytes = estimateResultBytes(output);
+  if (observedBytes === undefined || observedBytes <= maxOutputBytes) return;
+  throw outputSizeError(tool, maxOutputBytes, observedBytes);
+};
 
 export const createCapabilityAuditBuffer = <TContext = unknown>(
   options: CapabilityAuditBufferOptions = {},
@@ -306,6 +339,11 @@ export const createCapabilityBroker = <
       if (tool.concurrency !== undefined) entry.concurrency = tool.concurrency;
       if (tool.description !== undefined) entry.description = tool.description;
       if (tool.input !== undefined) entry.input = tool.input;
+      if (tool.maxOutputBytes !== undefined) {
+        entry.maxOutputBytes = tool.maxOutputBytes;
+      } else if (options.defaultMaxOutputBytes !== undefined) {
+        entry.maxOutputBytes = options.defaultMaxOutputBytes;
+      }
       if (tool.output !== undefined) entry.output = tool.output;
       if (tool.timeoutMs !== undefined) entry.timeoutMs = tool.timeoutMs;
       return entry;
@@ -374,6 +412,11 @@ export const createCapabilityBroker = <
         tool.validateOutput === undefined
           ? rawOutput
           : tool.validateOutput(rawOutput);
+      enforceOutputSize(
+        toolName,
+        output,
+        tool.maxOutputBytes ?? options.defaultMaxOutputBytes,
+      );
       audit({
         context: options.context,
         durationMs: now() - started,
