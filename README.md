@@ -41,7 +41,7 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.8.9)
+## What ships today (v0.8.10)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 

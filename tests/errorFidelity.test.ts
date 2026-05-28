@@ -16,6 +16,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   createCapabilityAuditBuffer,
   createIsolate,
+  Reference,
   ResultSizeError,
   type Isolate,
 } from "../src";
@@ -259,6 +260,33 @@ describe("script.runWithMetrics", () => {
     expect(err.message).toBe("boom");
     expect(err.receipt?.status).toBe("error");
     expect(err.receipt?.error?.name).toBe("Error");
+  });
+
+  test("runWithReceipt preserves host Reference error codes in receipts", async () => {
+    isolate = await createIsolate({ backend: "worker" });
+    const context = await isolate.createContext();
+    await context.setGlobal(
+      "failing",
+      new Reference(() => {
+        const error = new Error("capability rejected") as Error & {
+          code?: string;
+        };
+        error.name = "CapabilityError";
+        error.code = "CAPABILITY_OUTPUT_SIZE_LIMIT";
+        throw error;
+      }),
+    );
+    const script = await isolate.compileScript(`(async () => await failing())()`);
+
+    const err = (await rejection(
+      script.runWithReceipt(context, {
+        executionId: "reference_error_code",
+      }),
+    )) as Error & { code?: string; receipt?: { error?: { code?: string } } };
+
+    expect(err.name).toBe("CapabilityError");
+    expect(err.code).toBe("CAPABILITY_OUTPUT_SIZE_LIMIT");
+    expect(err.receipt?.error?.code).toBe("CAPABILITY_OUTPUT_SIZE_LIMIT");
   });
 
   test("maxResultBytes rejects oversized script results", async () => {

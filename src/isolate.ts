@@ -33,6 +33,7 @@ import type { ResolvedIsolatePolicy } from "./policy";
 import type {
   HostMessage,
   HostRequest,
+  WireError,
   WireValue,
   WorkerEvent,
   WorkerMessage,
@@ -163,13 +164,38 @@ const sendWithMetrics = <T>(
  * by setting `.name` and copying the captured own properties. instanceof
  * checks for user-defined subclasses won't work across the boundary — use
  * `.name === 'FooError'` or `.code === '40001'` etc. instead. */
-const rebuildError = (wire: {
-  name: string;
-  message: string;
-  stack?: string;
-  cause?: { name: string; message: string; stack?: string; cause?: unknown };
-  props?: Record<string, unknown>;
-}): Error => {
+const STANDARD_ERROR_KEYS = new Set(["name", "message", "stack", "cause"]);
+
+const wrapHostError = (error: Error, depth = 0): WireError => {
+  const wire: WireError = {
+    message: error.message,
+    name: error.name,
+  };
+  if (typeof error.stack === "string" && error.stack.length > 0) {
+    wire.stack = error.stack;
+  }
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (cause instanceof Error && depth < 10) {
+    wire.cause = wrapHostError(cause, depth + 1);
+  }
+  const props: Record<string, unknown> = {};
+  let hasProps = false;
+  for (const key of Object.keys(error)) {
+    if (STANDARD_ERROR_KEYS.has(key)) continue;
+    const value = (error as unknown as Record<string, unknown>)[key];
+    try {
+      structuredClone(value);
+      props[key] = value;
+      hasProps = true;
+    } catch {
+      // skip non-clonable
+    }
+  }
+  if (hasProps) wire.props = props;
+  return wire;
+};
+
+const rebuildError = (wire: WireError): Error => {
   if (
     wire.name === "ResultSizeError" &&
     typeof wire.props?.maxResultBytes === "number" &&
@@ -238,14 +264,7 @@ const handleEvent = (state: IsolateState, event: WorkerEvent): void => {
           op: "refReply",
           callId: event.callId,
           result: ok ? { kind: "value", value } : undefined,
-          error:
-            error === undefined
-              ? undefined
-              : {
-                  name: error.name,
-                  message: error.message,
-                  stack: error.stack,
-                },
+          error: error === undefined ? undefined : wrapHostError(error),
         } satisfies HostMessage);
       };
       if (fn === undefined) {

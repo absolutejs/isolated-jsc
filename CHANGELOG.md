@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.10 - 2026-05-28
+
+### Fixed
+
+- Preserved enumerable host `Reference` error properties, including capability `code`, when errors cross into sandbox code and back into execution receipts.
+
 ## 0.8.9 - 2026-05-28
 
 ### Added

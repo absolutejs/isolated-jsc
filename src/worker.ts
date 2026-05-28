@@ -134,6 +134,21 @@ const wrapError = (error: unknown, depth = 0): WireError => {
   return wire;
 };
 
+const rebuildError = (wire: WireError): Error => {
+  const error = new Error(wire.message);
+  error.name = wire.name;
+  if (wire.stack !== undefined) error.stack = wire.stack;
+  if (wire.cause !== undefined) {
+    (error as Error & { cause?: unknown }).cause = rebuildError(wire.cause);
+  }
+  if (wire.props !== undefined) {
+    for (const [key, value] of Object.entries(wire.props)) {
+      (error as unknown as Record<string, unknown>)[key] = value;
+    }
+  }
+  return error;
+};
+
 const jsonByteSize = (value: unknown): number | undefined => {
   try {
     return new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -420,9 +435,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
     if (pending === undefined) return;
     pendingRefCalls.delete(request.callId);
     if (request.error !== undefined) {
-      const error = new Error(request.error.message);
-      error.name = request.error.name;
-      pending.reject(error);
+      pending.reject(rebuildError(request.error));
       return;
     }
     pending.resolve(
