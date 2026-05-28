@@ -205,13 +205,8 @@ describeIfFfi("FFI Reference call-through", () => {
     // TimeoutError — not hang.
     isolate = await createIsolate({ backend: "ffi" });
     const context = await isolate.createContext();
-    await context.setGlobal(
-      "hang",
-      new Reference(() => new Promise(() => {})),
-    );
-    const script = await isolate.compileScript(
-      "(async () => await hang())()",
-    );
+    await context.setGlobal("hang", new Reference(() => new Promise(() => {})));
+    const script = await isolate.compileScript("(async () => await hang())()");
     const err = (await rejection(script.run(context, { timeout: 100 }))) as {
       name: string;
     };

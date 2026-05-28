@@ -277,7 +277,9 @@ describe("script.runWithMetrics", () => {
         throw error;
       }),
     );
-    const script = await isolate.compileScript(`(async () => await failing())()`);
+    const script = await isolate.compileScript(
+      `(async () => await failing())()`,
+    );
 
     const err = (await rejection(
       script.runWithReceipt(context, {

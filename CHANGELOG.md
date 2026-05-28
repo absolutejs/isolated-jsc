@@ -2,6 +2,16 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.21 - 2026-05-28
+
+### Added
+
+- Added `context.checkpointWithReceipt(options)` and `isolate.createContextWithReceipt(options)` returning versioned `CheckpointReceipt` envelopes alongside the underlying checkpoint or restored context.
+- Receipts carry `schemaVersion: 1`, `backend`, `operation: "create" | "restore"`, `executionId`, `startedAt`/`endedAt`/`durationMs`, `byteLength`, `included`, `skippedCount`, aggregated `skippedReasons` (`excluded`, `notClonable`, `overMaxBytes`), and optional `maxBytes`, `includeCount`, `excludeCount`, `sourceBackend`, `policy`, `purpose`, and `tenant` labels.
+- Errors during checkpoint create or restore rethrow with the receipt attached at `error.receipt`, mirroring `script.runWithReceipt` and `callable.callWithReceipt`.
+- Contract tests lock the schema-v1 checkpoint receipt key sets for create (full + minimal) and restore (success + error).
+- Backend parity tests cover skip-reason counts, restore metadata, and the error receipt on Worker and FFI when available.
+
 ## 0.8.20 - 2026-05-28
 
 ### Added

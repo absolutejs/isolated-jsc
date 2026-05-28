@@ -7,7 +7,11 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
-export { validateContextCheckpoint } from "./checkpoint";
+export {
+  checkpointWithReceipt,
+  createContextWithReceipt,
+  validateContextCheckpoint,
+} from "./checkpoint";
 export { createIsolatedRunner, runIsolated, runIsolatedFile } from "./run";
 export {
   CapabilityError,
@@ -80,12 +84,19 @@ export {
 } from "./types";
 export type {
   Callable,
+  CheckpointOperation,
+  CheckpointReceipt,
+  CheckpointReceiptOptions,
+  CheckpointReceiptSkippedCounts,
+  CheckpointWithReceiptResult,
   Context,
   ContextCheckpoint,
   ContextCheckpointOptions,
   ContextCheckpointSkippedKey,
   ContextCheckpointSkippedReason,
   CreateContextOptions,
+  CreateContextReceiptOptions,
+  CreateContextWithReceiptResult,
   CreateIsolate,
   Isolate,
   IsolateBackend,

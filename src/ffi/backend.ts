@@ -60,7 +60,11 @@ import {
   createSuccessReceipt,
 } from "../receipt";
 import { enforceResultSize } from "../resultLimits";
-import { validateContextCheckpoint } from "../checkpoint";
+import {
+  checkpointWithReceipt,
+  createContextWithReceipt,
+  validateContextCheckpoint,
+} from "../checkpoint";
 
 const encodedBytes = (value: unknown): number | undefined => {
   try {
@@ -626,6 +630,10 @@ export const createIsolateFfi = async (
       return makeFfiContext(state, isolate, id);
     },
 
+    createContextWithReceipt(opts) {
+      return createContextWithReceipt(isolate, opts);
+    },
+
     async heapSizeBytes(): Promise<number> {
       if (state.disposed) return 0;
       const ctx =
@@ -844,6 +852,10 @@ const makeFfiContext = (
         skipped: [...skipped, ...checkpoint.skipped],
         skippedCount: skipped.length + checkpoint.skippedCount,
       };
+    },
+
+    checkpointWithReceipt(options) {
+      return checkpointWithReceipt(context, options);
     },
 
     async dispose(): Promise<void> {

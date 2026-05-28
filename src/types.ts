@@ -173,6 +173,17 @@ export type Isolate = {
   createContext: (options?: CreateContextOptions) => Promise<Context>;
 
   /**
+   * Same as {@link createContext} but returns a {@link CheckpointReceipt}
+   * alongside the new context. The receipt's `operation` is `"restore"` and
+   * captures the bytes/keys carried in from `checkpoint`/`snapshot`, plus
+   * optional `purpose`/`tenant`/`executionId` labels for audit workflows.
+   * On failure the original error is rethrown with `.receipt` attached.
+   */
+  createContextWithReceipt: (
+    options?: CreateContextReceiptOptions,
+  ) => Promise<CreateContextWithReceiptResult>;
+
+  /**
    * Snapshot of the isolate's current heap usage in bytes (best-effort —
    * sampled via `bun:jsc.memoryUsage` in v1). Cheap; safe to call from
    * monitoring loops.
@@ -325,6 +336,17 @@ export type Context = {
   checkpoint: (
     options?: ContextCheckpointOptions,
   ) => Promise<ContextCheckpoint>;
+  /**
+   * Same as {@link checkpoint} but returns a {@link CheckpointReceipt}
+   * alongside the captured payload. The receipt's `operation` is `"create"`
+   * and aggregates skipped-key reasons into counts (`excluded`,
+   * `notClonable`, `overMaxBytes`) plus optional `purpose`/`tenant`/
+   * `executionId` labels for audit workflows. On failure the original error
+   * is rethrown with `.receipt` attached.
+   */
+  checkpointWithReceipt: (
+    options?: CheckpointReceiptOptions,
+  ) => Promise<CheckpointWithReceiptResult>;
   /** Dispose just this context (the isolate stays alive). */
   dispose: () => Promise<void>;
 };
@@ -377,6 +399,72 @@ export type RunMetrics = {
 export type RunWithMetricsResult<T = unknown> = {
   result: T;
   metrics: RunMetrics;
+};
+
+export type CheckpointOperation = "create" | "restore";
+
+export type CheckpointReceiptSkippedCounts = {
+  excluded: number;
+  notClonable: number;
+  overMaxBytes: number;
+};
+
+export type CheckpointReceipt = {
+  schemaVersion: 1;
+  backend: IsolateBackend;
+  operation: CheckpointOperation;
+  status: "success" | "error";
+  executionId: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  byteLength: number;
+  included: number;
+  skippedCount: number;
+  skippedReasons: CheckpointReceiptSkippedCounts;
+  memoryLimitMb: number;
+  maxBytes?: number;
+  includeCount?: number;
+  excludeCount?: number;
+  sourceBackend?: IsolateBackend;
+  error?: ExecutionReceiptError;
+  policy?: IsolatePolicyName;
+  purpose?: string;
+  tenant?: string;
+};
+
+/**
+ * Per-call labels copied into a {@link CheckpointReceipt}. Pair with
+ * {@link Context.checkpointWithReceipt}.
+ */
+export type CheckpointReceiptOptions = ContextCheckpointOptions & {
+  /**
+   * Optional ID for correlating receipts with an app/request log. A random
+   * `crypto.randomUUID()` value is used when omitted.
+   */
+  executionId?: string;
+  purpose?: string;
+  tenant?: string;
+};
+
+/**
+ * Per-call labels for {@link Isolate.createContextWithReceipt}. Includes the
+ * standard {@link CreateContextOptions} plus receipt-only correlation labels.
+ */
+export type CreateContextReceiptOptions = CreateContextOptions & {
+  executionId?: string;
+  purpose?: string;
+  tenant?: string;
+};
+
+export type CheckpointWithReceiptResult = {
+  checkpoint: ContextCheckpoint;
+  receipt: CheckpointReceipt;
+};
+
+export type CreateContextWithReceiptResult = {
+  context: Context;
+  receipt: CheckpointReceipt;
 };
 
 export type ExecutionReceiptStatus = "success" | "error";

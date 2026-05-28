@@ -45,7 +45,11 @@ import {
   type ConsoleLimitState,
 } from "./consoleLimits";
 import { applyIsolatePolicyOptions } from "./policy";
-import { validateContextCheckpoint } from "./checkpoint";
+import {
+  checkpointWithReceipt,
+  createContextWithReceipt,
+  validateContextCheckpoint,
+} from "./checkpoint";
 import {
   attachReceipt,
   createErrorReceipt,
@@ -437,6 +441,10 @@ export const createIsolateWorker = async (
       return makeContext(state, isolate, id);
     },
 
+    createContextWithReceipt(options) {
+      return createContextWithReceipt(isolate, options);
+    },
+
     async heapSizeBytes(): Promise<number> {
       const id = state.nextId++;
       return send<number>(state, { id, op: "heap" });
@@ -539,6 +547,10 @@ const makeContext = (
         };
       }
       return value as Awaited<ReturnType<Context["checkpoint"]>>;
+    },
+
+    checkpointWithReceipt(options) {
+      return checkpointWithReceipt(context, options);
     },
 
     async dispose(): Promise<void> {

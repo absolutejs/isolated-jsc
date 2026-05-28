@@ -243,3 +243,111 @@ describe("context.checkpoint()", () => {
     },
   );
 });
+
+describe("checkpoint receipts", () => {
+  test.each(checkpointBackends)(
+    "checkpointWithReceipt surfaces skip-reason counts and labels on %s",
+    async (backend) => {
+      isolate = await createIsolate({ backend });
+      const context = await isolate.createContext({
+        seed: `
+          this.counter = 40;
+          this.keep = { label: "checkpoint" };
+          this.skipFn = function () { return counter };
+          this.large = "x".repeat(128);
+        `,
+      });
+
+      const { checkpoint, receipt } = await context.checkpointWithReceipt({
+        include: ["counter", "keep", "skipFn", "large"],
+        maxBytes: 80,
+        purpose: "audit",
+        tenant: "tenant-a",
+      });
+
+      expect(receipt.operation).toBe("create");
+      expect(receipt.status).toBe("success");
+      expect(receipt.backend).toBe(backend);
+      expect(receipt.byteLength).toBe(checkpoint.byteLength);
+      expect(receipt.included).toBe(checkpoint.included);
+      expect(receipt.skippedCount).toBe(checkpoint.skippedCount);
+      expect(receipt.skippedReasons.notClonable).toBeGreaterThanOrEqual(1);
+      expect(receipt.skippedReasons.overMaxBytes).toBeGreaterThanOrEqual(1);
+      expect(receipt.maxBytes).toBe(80);
+      expect(receipt.includeCount).toBe(4);
+      expect(receipt.purpose).toBe("audit");
+      expect(receipt.tenant).toBe("tenant-a");
+      expect(receipt.memoryLimitMb).toBeGreaterThan(0);
+      expect(typeof receipt.executionId).toBe("string");
+      expect(typeof receipt.durationMs).toBe("number");
+    },
+  );
+
+  test.each(checkpointBackends)(
+    "createContextWithReceipt records source backend and restored bytes on %s",
+    async (backend) => {
+      isolate = await createIsolate({ backend });
+      const source = await isolate.createContext({
+        seed: "this.kept = { count: 7 };",
+      });
+      const checkpoint = await source.checkpoint();
+      await source.dispose();
+
+      const { context, receipt } = await isolate.createContextWithReceipt({
+        checkpoint,
+        executionId: "restore_trace",
+        purpose: "audit",
+        seed: "this.result = kept.count * 6;",
+      });
+
+      expect(receipt.operation).toBe("restore");
+      expect(receipt.status).toBe("success");
+      expect(receipt.backend).toBe(backend);
+      expect(receipt.sourceBackend).toBe(backend);
+      expect(receipt.byteLength).toBe(checkpoint.byteLength);
+      expect(receipt.included).toBe(checkpoint.included);
+      expect(receipt.executionId).toBe("restore_trace");
+      expect(receipt.purpose).toBe("audit");
+      expect(receipt.skippedCount).toBe(0);
+      expect(receipt.skippedReasons).toEqual({
+        excluded: 0,
+        notClonable: 0,
+        overMaxBytes: 0,
+      });
+
+      const script = await isolate.compileScript("result");
+      expect(await script.run(context)).toBe(42);
+    },
+  );
+
+  test.each(checkpointBackends)(
+    "createContextWithReceipt error path attaches receipt on %s",
+    async (backend) => {
+      isolate = await createIsolate({ backend });
+      const broken = {
+        backend: "worker" as const,
+        byteLength: 5,
+        data: { keep: 1 },
+        included: 1,
+        schemaVersion: 9 as unknown as 1,
+        skipped: [],
+        skippedCount: 0,
+      };
+      let receipt: unknown;
+      try {
+        await isolate.createContextWithReceipt({
+          checkpoint: broken,
+          purpose: "audit",
+        });
+      } catch (error) {
+        receipt = (error as { receipt?: unknown }).receipt;
+      }
+      expect((receipt as { status: string }).status).toBe("error");
+      expect((receipt as { operation: string }).operation).toBe("restore");
+      expect((receipt as { backend: string }).backend).toBe(backend);
+      expect((receipt as { sourceBackend: string }).sourceBackend).toBe(
+        "worker",
+      );
+    },
+  );
+});
