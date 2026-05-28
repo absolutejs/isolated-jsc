@@ -158,6 +158,7 @@ describe("Context.compileCallable", () => {
     );
     const { result, metrics } = await fn.callWithMetrics([1000]);
     expect(result).toBe(499500);
+    expect(metrics.backend).toBe("worker");
     expect(metrics.cpuMs).toBeGreaterThanOrEqual(0);
     expect(metrics.heapBytes).toBeGreaterThan(0);
   });

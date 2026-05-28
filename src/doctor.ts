@@ -3,6 +3,7 @@
 import { resolveJscLibrary } from "./ffi/resolver";
 
 const lines: string[] = [];
+const json = Bun.argv.includes("--json");
 
 const print = (line = ""): void => {
   lines.push(line);
@@ -10,6 +11,37 @@ const print = (line = ""): void => {
 
 const bunVersion = Bun.version;
 const probe = resolveJscLibrary();
+const report =
+  probe.kind === "found"
+    ? {
+        arch: process.arch,
+        bun: bunVersion,
+        defaultBackend: "ffi" as const,
+        ffi: {
+          available: true,
+          flavor: probe.flavor,
+          path: probe.path,
+        },
+        platform: process.platform,
+        status: "ok" as const,
+      }
+    : {
+        arch: process.arch,
+        bun: bunVersion,
+        defaultBackend: "worker" as const,
+        ffi: {
+          available: false,
+          checked: probe.checked,
+          installHint: probe.installHint,
+        },
+        platform: process.platform,
+        status: "worker-fallback-available" as const,
+      };
+
+if (json) {
+  console.log(JSON.stringify(report, null, 2));
+  process.exit(0);
+}
 
 print("@absolutejs/isolated-jsc doctor");
 print("");

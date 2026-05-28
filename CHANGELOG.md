@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## Unreleased
+
+### Added
+
+- Added backend observability: every isolate now exposes `isolate.backend`, per-run metrics include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend/JSC probe details.
+
 ## 0.7.3 - 2026-05-27
 
 ### Changed

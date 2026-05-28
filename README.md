@@ -62,7 +62,8 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **First-class isolate pool (T2.2, new in 0.1).** `createIsolatePool({ isolate, maxSize, idleMs, recycleAfter })` returns a keyed pool — lazy spawn per key, reuse across calls, LRU eviction at cap, transparent re-spawn after isolate self-termination, configurable post-N-call recycle to bound JSC heap creep. Replaces the bespoke per-tenant lookup-or-spawn map every consumer rolls.
 - **Context seed + snapshot (T2.3, new in 0.1).** `createContext({ seed, snapshot })` runs setup code (assign onto `this`) and restores cloneable data state from a previous `context.snapshot()`. Pair them to fork a fresh context from a prior one's accumulated state (the AI-agent-across-turns pattern).
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
-- **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
+- **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
+- **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 
 ### Bun sandboxing decision guide
 
@@ -211,11 +212,12 @@ Requires Bun ≥ 1.3.
 
 ```bash
 bunx @absolutejs/isolated-jsc
+bunx @absolutejs/isolated-jsc --json
 # or, from this repo:
 bun src/doctor.ts
 ```
 
-The doctor prints Bun/platform details, FFI backend availability, JavaScriptCore flavor/path when found, checked library paths when missing, and the install hint for the current platform.
+The doctor prints Bun/platform details, FFI backend availability, JavaScriptCore flavor/path when found, checked library paths when missing, and the install hint for the current platform. Pass `--json` for machine-readable CI or deployment checks.
 
 ## Examples
 

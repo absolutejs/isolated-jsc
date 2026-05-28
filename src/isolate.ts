@@ -323,6 +323,7 @@ export const createIsolateWorker = async (
 
   const isolate: Isolate = {
     options: state.options,
+    backend: "worker",
     get isDisposed(): boolean {
       return state.disposed;
     },
@@ -540,7 +541,10 @@ const makeScript = (
       // fall back to zeros only if the worker reply was malformed.
       return {
         result: fromWire(result),
-        metrics: metrics ?? { cpuMs: 0, heapBytes: 0 },
+        metrics: {
+          ...(metrics ?? { cpuMs: 0, heapBytes: 0 }),
+          backend: "worker",
+        },
       };
     },
 
@@ -599,7 +603,10 @@ const makeCallable = (
         timeoutMs,
       );
       return {
-        metrics: metrics ?? { cpuMs: 0, heapBytes: 0 },
+        metrics: {
+          ...(metrics ?? { cpuMs: 0, heapBytes: 0 }),
+          backend: "worker",
+        },
         result: fromWire(result),
       };
     },

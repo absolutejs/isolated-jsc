@@ -128,6 +128,7 @@ describe("script.runWithMetrics", () => {
     const script = await isolate.compileScript("1 + 2");
     const { result, metrics } = await script.runWithMetrics(context);
     expect(result).toBe(3);
+    expect(metrics.backend).toBe("worker");
     expect(typeof metrics.cpuMs).toBe("number");
     expect(metrics.cpuMs).toBeGreaterThanOrEqual(0);
     expect(typeof metrics.heapBytes).toBe("number");
@@ -147,6 +148,7 @@ describe("script.runWithMetrics", () => {
     const { metrics } = await script.runWithMetrics(context, {
       timeout: 5000,
     });
+    expect(metrics.backend).toBe("worker");
     expect(metrics.cpuMs).toBeGreaterThan(0);
     expect(metrics.cpuMs).toBeLessThan(5000);
   });

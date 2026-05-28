@@ -347,6 +347,7 @@ export const createIsolateFfi = async (
 
   const isolate: Isolate = {
     options: state.options,
+    backend: "ffi",
     get isDisposed(): boolean {
       return state.disposed;
     },
@@ -733,7 +734,7 @@ const makeFfiCallable = (
     ): Promise<RunWithMetricsResult> {
       const { value, cpuMs, heapBytes } = await runRaw(args, options);
       return {
-        metrics: { cpuMs: Math.round(cpuMs), heapBytes },
+        metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
         result: value,
       };
     },
@@ -1137,7 +1138,7 @@ const makeFfiScript = (
       if (options.release === true) await script.dispose();
       return {
         result: value,
-        metrics: { cpuMs: Math.round(cpuMs), heapBytes },
+        metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
       };
     },
 

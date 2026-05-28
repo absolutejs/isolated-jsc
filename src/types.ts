@@ -15,6 +15,9 @@
  * users noticing.
  */
 
+/** Backend implementation selected for an {@link Isolate}. */
+export type IsolateBackend = "ffi" | "worker";
+
 /** Construction options for an {@link Isolate}. */
 export type IsolateOptions = {
   /**
@@ -105,6 +108,8 @@ export type IsolateOptions = {
 export type Isolate = {
   /** Construction options the isolate was built with. */
   readonly options: Readonly<Required<Pick<IsolateOptions, "memoryLimit">>>;
+  /** Backend selected for this isolate after `auto` resolution. */
+  readonly backend: IsolateBackend;
   /** `true` once {@link dispose} has been called or the isolate self-died. */
   readonly isDisposed: boolean;
 
@@ -250,6 +255,8 @@ export type RunOptions = {
 
 /** Per-run telemetry returned by {@link Script.runWithMetrics}. */
 export type RunMetrics = {
+  /** Backend that executed this run. Useful when `backend: "auto"` is used. */
+  backend: IsolateBackend;
   /**
    * Wall-clock duration (ms) of the script body inside the worker — does
    * NOT include host-side message-passing overhead. Use for "how

@@ -42,6 +42,7 @@ afterEach(async () => {
 describeIfFfi("FFI backend — strictly-better-than-Worker properties", () => {
   test("cold heap is tiny vs Worker (~300 KB, not ~46 MB)", async () => {
     isolate = await createIsolate({ backend: "ffi", memoryLimit: 256 });
+    expect(isolate.backend).toBe("ffi");
     const bytes = await isolate.heapSizeBytes();
     expect(bytes).toBeGreaterThan(0);
     // Worker backend baseline is ~46 MB. The FFI cold heap is in the
@@ -140,6 +141,7 @@ describeIfFfi("FFI backend — strictly-better-than-Worker properties", () => {
     );
     const { result, metrics } = await script.runWithMetrics(context);
     expect(typeof result).toBe("number");
+    expect(metrics.backend).toBe("ffi");
     expect(metrics.cpuMs).toBeGreaterThan(0);
     expect(metrics.heapBytes).toBeGreaterThan(0);
   });
@@ -148,6 +150,7 @@ describeIfFfi("FFI backend — strictly-better-than-Worker properties", () => {
     // Should work even without libJSC reachable; the Worker path is
     // self-contained.
     isolate = await createIsolate({ backend: "worker", memoryLimit: 256 });
+    expect(isolate.backend).toBe("worker");
     const context = await isolate.createContext();
     const script = await isolate.compileScript("1 + 1");
     expect(await script.run(context)).toBe(2);

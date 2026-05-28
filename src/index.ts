@@ -50,6 +50,7 @@ export type {
   CreateContextOptions,
   CreateIsolate,
   Isolate,
+  IsolateBackend,
   IsolateOptions,
   RunMetrics,
   RunOptions,

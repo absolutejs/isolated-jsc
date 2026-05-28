@@ -29,6 +29,7 @@ describe("createIsolate", () => {
     // heap (~46 MB on Bun 1.3.x). Memory caps below ~64 MB are now too
     // tight; documented in IsolateOptions.memoryLimit JSDoc.
     const isolate = await createIsolate({ memoryLimit: 128 });
+    expect(isolate.backend).toBe("worker");
     const context = await isolate.createContext();
     const script = await isolate.compileScript("1 + 2");
     const result = await script.run(context);
@@ -121,6 +122,7 @@ describe("createIsolate", () => {
     // Default memoryLimit is 256 MB. Assert against that ceiling — the point
     // is "the reading isn't junk", not "the cold start is small".
     const isolate = await createIsolate({ memoryLimit: 256 });
+    expect(isolate.backend).toBe("worker");
     const bytes = await isolate.heapSizeBytes();
     expect(bytes).toBeGreaterThan(0);
     expect(bytes).toBeLessThan(256 * 1024 * 1024);
