@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.11 - 2026-05-28
+
+### Fixed
+
+- Preserved host `Reference` error metadata on the FFI backend, including capability `code`, `tool`, and output-size fields when synchronous throws or async rejections cross through JavaScriptCore and execution receipts.
+
 ## 0.8.10 - 2026-05-28
 
 ### Fixed

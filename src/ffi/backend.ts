@@ -167,6 +167,61 @@ const buildWatchdog = (state: IsolateFfiState): JSCallback =>
     },
   );
 
+const STANDARD_ERROR_KEYS = new Set(["name", "message", "stack", "cause"]);
+
+const setObjectProperty = (
+  s: JscSymbols,
+  ctx: bigint,
+  object: bigint,
+  name: string,
+  value: unknown,
+): void => {
+  const propName = makeJsString(s, name);
+  const exc = new BigUint64Array(1);
+  s.JSObjectSetProperty(
+    ctx,
+    object,
+    propName,
+    hostToJs(s, ctx, value),
+    0,
+    BigInt(ptr(exc)),
+  );
+  s.JSStringRelease(propName);
+};
+
+const makeErrorObject = (
+  s: JscSymbols,
+  ctx: bigint,
+  error: unknown,
+): bigint => {
+  const message = error instanceof Error ? error.message : String(error);
+  const messageJs = makeJsString(s, message);
+  const messageValue = s.JSValueMakeString(ctx, messageJs);
+  s.JSStringRelease(messageJs);
+  const argsBuf = new BigUint64Array([messageValue]);
+  const innerExc = new BigUint64Array(1);
+  const errObj = s.JSObjectMakeError(
+    ctx,
+    1n,
+    BigInt(ptr(argsBuf)),
+    BigInt(ptr(innerExc)),
+  );
+  if (error instanceof Error) {
+    setObjectProperty(s, ctx, errObj, "name", error.name);
+    for (const key of Object.keys(error)) {
+      if (STANDARD_ERROR_KEYS.has(key)) continue;
+      const value = (error as unknown as Record<string, unknown>)[key];
+      try {
+        structuredClone(value);
+        setObjectProperty(s, ctx, errObj, key, value);
+      } catch {
+        // skip non-clonable
+      }
+    }
+  }
+  return errObj;
+};
+
 /** Install undefined-shadows on the new context's globalThis for HARDEN_TARGETS.
  * Plus disable eval/Function via JSGlobalContextSetEvalEnabled to close the
  * indirect-eval and Function-constructor escapes. */
@@ -205,11 +260,19 @@ const errorFromJsValue = (s: JscSymbols, ctx: bigint, value: bigint): Error => {
   const messageProp = makeJsString(s, "message");
   const nameProp = makeJsString(s, "name");
   const stackProp = makeJsString(s, "stack");
+  const codeProp = makeJsString(s, "code");
+  const maxOutputBytesProp = makeJsString(s, "maxOutputBytes");
+  const observedBytesProp = makeJsString(s, "observedBytes");
+  const toolProp = makeJsString(s, "tool");
   const isObject = s.JSValueIsObject(ctx, value);
 
   let message = "unknown";
   let name = "Error";
   let stack: string | undefined;
+  let code: string | undefined;
+  let maxOutputBytes: number | undefined;
+  let observedBytes: number | undefined;
+  let tool: string | undefined;
 
   if (isObject) {
     const msgVal = s.JSObjectGetProperty(
@@ -242,6 +305,42 @@ const errorFromJsValue = (s: JscSymbols, ctx: bigint, value: bigint): Error => {
     if (stackVal !== 0n && s.JSValueIsString(ctx, stackVal)) {
       stack = jsToHost(s, ctx, stackVal) as string;
     }
+    const codeVal = s.JSObjectGetProperty(
+      ctx,
+      value,
+      codeProp,
+      BigInt(ptr(exc)),
+    );
+    if (codeVal !== 0n && s.JSValueIsString(ctx, codeVal)) {
+      code = jsToHost(s, ctx, codeVal) as string;
+    }
+    const toolVal = s.JSObjectGetProperty(
+      ctx,
+      value,
+      toolProp,
+      BigInt(ptr(exc)),
+    );
+    if (toolVal !== 0n && s.JSValueIsString(ctx, toolVal)) {
+      tool = jsToHost(s, ctx, toolVal) as string;
+    }
+    const maxOutputBytesVal = s.JSObjectGetProperty(
+      ctx,
+      value,
+      maxOutputBytesProp,
+      BigInt(ptr(exc)),
+    );
+    if (maxOutputBytesVal !== 0n && s.JSValueIsNumber(ctx, maxOutputBytesVal)) {
+      maxOutputBytes = jsToHost(s, ctx, maxOutputBytesVal) as number;
+    }
+    const observedBytesVal = s.JSObjectGetProperty(
+      ctx,
+      value,
+      observedBytesProp,
+      BigInt(ptr(exc)),
+    );
+    if (observedBytesVal !== 0n && s.JSValueIsNumber(ctx, observedBytesVal)) {
+      observedBytes = jsToHost(s, ctx, observedBytesVal) as number;
+    }
   } else if (s.JSValueIsString(ctx, value)) {
     message = jsToHost(s, ctx, value) as string;
   }
@@ -249,10 +348,27 @@ const errorFromJsValue = (s: JscSymbols, ctx: bigint, value: bigint): Error => {
   s.JSStringRelease(messageProp);
   s.JSStringRelease(nameProp);
   s.JSStringRelease(stackProp);
+  s.JSStringRelease(codeProp);
+  s.JSStringRelease(maxOutputBytesProp);
+  s.JSStringRelease(observedBytesProp);
+  s.JSStringRelease(toolProp);
 
   const error = new Error(message);
   error.name = name;
   if (stack !== undefined) error.stack = stack;
+  if (code !== undefined) {
+    (error as Error & { code?: string }).code = code;
+  }
+  if (tool !== undefined) {
+    (error as Error & { tool?: string }).tool = tool;
+  }
+  if (maxOutputBytes !== undefined) {
+    (error as Error & { maxOutputBytes?: number }).maxOutputBytes =
+      maxOutputBytes;
+  }
+  if (observedBytes !== undefined) {
+    (error as Error & { observedBytes?: number }).observedBytes = observedBytes;
+  }
   return error;
 };
 
@@ -838,20 +954,7 @@ const makeReferenceFunction = (
     error: unknown,
   ): void => {
     if (excPtr === 0n) return;
-    const message = error instanceof Error ? error.message : String(error);
-    const messageJs = makeJsString(s, message);
-    const messageValue = s.JSValueMakeString(ctxArg, messageJs);
-    s.JSStringRelease(messageJs);
-    // JSObjectMakeError(ctx, argCount, args[], exception) constructs a
-    // real JS Error object whose .message is the first arg.
-    const argsBuf = new BigUint64Array([messageValue]);
-    const innerExc = new BigUint64Array(1);
-    const errObj = s.JSObjectMakeError(
-      ctxArg,
-      1n,
-      BigInt(ptr(argsBuf)),
-      BigInt(ptr(innerExc)),
-    );
+    const errObj = makeErrorObject(s, ctxArg, error);
     // Write the error JSObjectRef into the 8 bytes at excPtr. JSC reads
     // the out-param immediately after the callback returns, so a
     // synchronous write here is what surfaces the throw to user code.
@@ -927,11 +1030,7 @@ const makeReferenceFunction = (
               );
             },
             (err) => {
-              const errJs = hostToJs(
-                s,
-                ctxArg,
-                err instanceof Error ? err.message : String(err),
-              );
+              const errJs = makeErrorObject(s, ctxArg, err);
               const argsBuf = new BigUint64Array([errJs]);
               const callExc = new BigUint64Array(1);
               s.JSObjectCallAsFunction(

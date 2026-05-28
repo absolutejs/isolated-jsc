@@ -13,7 +13,12 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { createIsolate, Reference, type Isolate } from "../../src";
+import {
+  CapabilityError,
+  createIsolate,
+  Reference,
+  type Isolate,
+} from "../../src";
 import { resolveJscLibrary } from "../../src/ffi/resolver";
 
 const ffiAvailable = resolveJscLibrary().kind === "found";
@@ -78,6 +83,73 @@ describeIfFfi("FFI Reference call-through", () => {
       "(() => { try { failing(); return 'no throw' } catch (e) { return e.message } })()",
     );
     expect(await script.run(context)).toBe("boom");
+  });
+
+  test("host fn throws: capability metadata survives through user code and receipts", async () => {
+    isolate = await createIsolate({ backend: "ffi" });
+    const context = await isolate.createContext();
+    const failing = new Reference(() => {
+      const error = new CapabilityError(
+        "echo",
+        "CAPABILITY_OUTPUT_SIZE_LIMIT",
+        "too large",
+      ) as CapabilityError & {
+        maxOutputBytes?: number;
+        observedBytes?: number;
+      };
+      error.maxOutputBytes = 16;
+      error.observedBytes = 64;
+      throw error;
+    });
+    await context.setGlobal("failing", failing);
+    const script = await isolate.compileScript(
+      "(() => { try { failing(); return 'no throw' } catch (e) { return [e.name, e.code, e.tool, e.maxOutputBytes, e.observedBytes].join(':') } })()",
+    );
+
+    expect(await script.run(context)).toBe(
+      "CapabilityError:CAPABILITY_OUTPUT_SIZE_LIMIT:echo:16:64",
+    );
+
+    const receiptScript = await isolate.compileScript("failing()");
+    const error = (await rejection(
+      receiptScript.runWithReceipt(context),
+    )) as Error & {
+      code?: string;
+      maxOutputBytes?: number;
+      observedBytes?: number;
+      receipt?: { error?: { code?: string } };
+      tool?: string;
+    };
+    expect(error.name).toBe("CapabilityError");
+    expect(error.code).toBe("CAPABILITY_OUTPUT_SIZE_LIMIT");
+    expect(error.tool).toBe("echo");
+    expect(error.maxOutputBytes).toBe(16);
+    expect(error.observedBytes).toBe(64);
+    expect(error.receipt?.error?.code).toBe("CAPABILITY_OUTPUT_SIZE_LIMIT");
+  });
+
+  test("async host fn rejection preserves capability metadata", async () => {
+    isolate = await createIsolate({ backend: "ffi" });
+    const context = await isolate.createContext();
+    await context.setGlobal(
+      "failing",
+      new Reference(() =>
+        Promise.reject(
+          new CapabilityError(
+            "echo",
+            "CAPABILITY_OUTPUT_SIZE_LIMIT",
+            "too large",
+          ),
+        ),
+      ),
+    );
+    const script = await isolate.compileScript(
+      "(async () => { try { await failing(); return 'no throw' } catch (e) { return [e.name, e.code, e.tool].join(':') } })()",
+    );
+
+    expect(await script.run(context)).toBe(
+      "CapabilityError:CAPABILITY_OUTPUT_SIZE_LIMIT:echo",
+    );
   });
 
   test("multiple References on one context don't interfere", async () => {
