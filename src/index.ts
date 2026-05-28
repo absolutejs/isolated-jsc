@@ -68,6 +68,8 @@ export type { IsolatePool, IsolatePoolOptions } from "./pool";
 export type {
   CreateIsolatedRunnerOptions,
   IsolatedRunner,
+  IsolatedRunnerCallOptions,
+  IsolatedRunnerCallWithMetricsOptions,
   IsolatedRunnerRunOptions,
   IsolatedRunnerRunWithMetricsOptions,
   RunIsolatedOptions,

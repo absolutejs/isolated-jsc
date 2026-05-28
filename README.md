@@ -66,7 +66,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 - **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
 - **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
-- **Reusable runners.** `createIsolatedRunner({ policy, globals, pool })` reuses isolates by key for hot tenant/session/conversation paths while creating a fresh context per run.
+- **Reusable runners.** `createIsolatedRunner({ policy, globals, pool })` reuses isolates by key for hot tenant/session/conversation paths. Use `runner.run()` for fresh-context source execution or `runner.call()` to compile a callable once per key/name and call it repeatedly.
 
 ### Bun sandboxing decision guide
 
@@ -230,6 +230,14 @@ const tenantResult = await runner.run<number>("input.n * 2", {
   globals: { input: { n: 21 } },
 });
 // tenantResult === 42
+
+const callableResult = await runner.call<number>(
+  "scoreFormula",
+  "(input) => input.base * 2 + input.bonus",
+  [{ base: 20, bonus: 2 }],
+  { key: "tenant_123" },
+);
+// callableResult === 42
 
 await runner.dispose();
 await isolate.dispose();

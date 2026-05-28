@@ -151,4 +151,84 @@ describe("createIsolatedRunner", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe("isolate pool has been disposed");
   });
+
+  test("caches compiled callables by key and name", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    try {
+      const source = `(() => {
+        const compiles = 1;
+        return (n) => ({ n: n * 2, compiles });
+      })()`;
+
+      const first = await runner.call<{ n: number; compiles: number }>(
+        "double",
+        source,
+        [2],
+      );
+      const second = await runner.call<{ n: number; compiles: number }>(
+        "double",
+        source,
+        [3],
+      );
+      const other = await runner.call<{ n: number; compiles: number }>(
+        "double",
+        source,
+        [4],
+        { key: "other" },
+      );
+
+      expect(first).toEqual({ n: 4, compiles: 1 });
+      expect(second).toEqual({ n: 6, compiles: 1 });
+      expect(other).toEqual({ n: 8, compiles: 1 });
+      expect(runner.size()).toBe(2);
+    } finally {
+      await runner.dispose();
+    }
+  });
+
+  test("recompiles cached callable when source changes", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    try {
+      const first = await runner.call<number>("math", "(n) => n * 2", [5]);
+      const second = await runner.call<number>("math", "(n) => n * 3", [5]);
+
+      expect(first).toBe(10);
+      expect(second).toBe(15);
+      expect(runner.size()).toBe(1);
+    } finally {
+      await runner.dispose();
+    }
+  });
+
+  test("callable runner supports metrics and Reference args", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    const calls: string[] = [];
+    const log = new Reference((value: unknown) => {
+      calls.push(String(value));
+      return calls.length;
+    });
+    try {
+      const measured = await runner.call<number>(
+        "logAndCount",
+        "async (log, value) => await log(value)",
+        [log, "hello"],
+        { withMetrics: true },
+      );
+
+      expect(measured.result).toBe(1);
+      expect(measured.metrics.backend).toBe("worker");
+      expect(calls).toEqual(["hello"]);
+    } finally {
+      await runner.dispose();
+    }
+  });
 });

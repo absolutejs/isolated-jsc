@@ -1,7 +1,10 @@
 import { createIsolate } from "./isolate";
 import { createIsolatePool, type IsolatePoolOptions } from "./pool";
 import type {
+  Callable,
+  Context,
   CreateContextOptions,
+  Isolate,
   IsolateOptions,
   RunOptions,
   RunWithMetricsResult,
@@ -68,6 +71,29 @@ export type IsolatedRunnerRunWithMetricsOptions = IsolatedRunnerRunOptions & {
   withMetrics: true;
 };
 
+export type IsolatedRunnerCallOptions = {
+  /**
+   * Pool key. Use tenant/session/conversation ids to reuse the same isolate
+   * and compiled callable across related executions. Defaults to `"default"`.
+   */
+  key?: string;
+  /**
+   * Context options used when the callable is first compiled for this key/name.
+   */
+  context?: CreateContextOptions;
+  /**
+   * Globals installed when the callable is first compiled for this key/name.
+   * Dynamic inputs should usually be passed via `args`.
+   */
+  globals?: Record<string, unknown>;
+  run?: RunOptions;
+  withMetrics?: boolean;
+};
+
+export type IsolatedRunnerCallWithMetricsOptions = IsolatedRunnerCallOptions & {
+  withMetrics: true;
+};
+
 export type IsolatedRunner = {
   run: {
     <T = unknown>(
@@ -79,8 +105,29 @@ export type IsolatedRunner = {
       options?: IsolatedRunnerRunOptions,
     ): Promise<T>;
   };
+  call: {
+    <T = unknown>(
+      name: string,
+      source: string,
+      args: unknown[],
+      options: IsolatedRunnerCallWithMetricsOptions,
+    ): Promise<RunWithMetricsResult<T>>;
+    <T = unknown>(
+      name: string,
+      source: string,
+      args?: unknown[],
+      options?: IsolatedRunnerCallOptions,
+    ): Promise<T>;
+  };
   size: () => number;
   dispose: () => Promise<void>;
+};
+
+type CallableSlot = {
+  callable: Callable;
+  context: Context;
+  isolate: Isolate;
+  source: string;
 };
 
 export async function runIsolated<T = unknown>(
@@ -136,6 +183,31 @@ export const createIsolatedRunner = (
     ...(poolOptions ?? {}),
     isolate: isolateOptions,
   });
+  const callables = new Map<string, CallableSlot>();
+
+  const installGlobals = async (
+    context: Context,
+    globals: Record<string, unknown> | undefined,
+  ): Promise<void> => {
+    if (globals === undefined) return;
+    for (const [name, value] of Object.entries(globals)) {
+      await context.setGlobal(name, value);
+    }
+  };
+
+  const disposeSlot = async (slot: CallableSlot | undefined): Promise<void> => {
+    if (slot === undefined) return;
+    try {
+      await slot.callable.dispose();
+    } catch {
+      // The isolate may already have died; pool disposal owns the final tear-down.
+    }
+    try {
+      await slot.context.dispose();
+    } catch {
+      // Same as above.
+    }
+  };
 
   const run = async <T = unknown>(
     source: string,
@@ -154,11 +226,7 @@ export const createIsolatedRunner = (
 
     return pool.run(key, async (isolate) => {
       const context = await isolate.createContext(contextOptions);
-      if (globals !== undefined) {
-        for (const [name, value] of Object.entries(globals)) {
-          await context.setGlobal(name, value);
-        }
-      }
+      await installGlobals(context, globals);
 
       const script = await isolate.compileScript(source);
       try {
@@ -174,9 +242,66 @@ export const createIsolatedRunner = (
     });
   };
 
+  const call = async <T = unknown>(
+    name: string,
+    source: string,
+    args: unknown[] = [],
+    callOptions: IsolatedRunnerCallOptions = {},
+  ): Promise<T | RunWithMetricsResult<T>> => {
+    const key = callOptions.key ?? "default";
+    const cacheKey = `${key}\0${name}`;
+    const contextOptions = callOptions.context ?? defaultContext;
+    const globals =
+      defaultGlobals === undefined && callOptions.globals === undefined
+        ? undefined
+        : { ...(defaultGlobals ?? {}), ...(callOptions.globals ?? {}) };
+    const callableRunOptions =
+      defaultRun === undefined && callOptions.run === undefined
+        ? undefined
+        : { ...(defaultRun ?? {}), ...(callOptions.run ?? {}) };
+
+    return pool.run(key, async (isolate) => {
+      let slot = callables.get(cacheKey);
+      if (
+        slot === undefined ||
+        slot.isolate !== isolate ||
+        isolate.isDisposed ||
+        slot.source !== source
+      ) {
+        await disposeSlot(slot);
+        const context = await isolate.createContext(contextOptions);
+        await installGlobals(context, globals);
+        const callable = await context.compileCallable(source);
+        slot = { callable, context, isolate, source };
+        callables.set(cacheKey, slot);
+      }
+
+      try {
+        if (callOptions.withMetrics === true) {
+          const result = await slot.callable.callWithMetrics(
+            args,
+            callableRunOptions,
+          );
+          return result as RunWithMetricsResult<T>;
+        }
+        return (await slot.callable.call(args, callableRunOptions)) as T;
+      } finally {
+        if (isolate.isDisposed) {
+          callables.delete(cacheKey);
+        }
+      }
+    });
+  };
+
   return {
     run: run as IsolatedRunner["run"],
+    call: call as IsolatedRunner["call"],
     size: () => pool.size(),
-    dispose: () => pool.dispose(),
+    async dispose() {
+      const slots = [...callables.values()];
+      callables.clear();
+      await Promise.all(slots.map((slot) => disposeSlot(slot)));
+      await pool.dispose();
+    },
   };
 };
