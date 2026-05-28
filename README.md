@@ -33,6 +33,14 @@ This leaves an entire category of applications stranded on Node:
 
 `@absolutejs/isolated-jsc` fills that gap. See [BUN_POSITIONING.md](./BUN_POSITIONING.md) for the Bun-focused strategic frame, [ISSUES_WILL_CLOSE.md](./ISSUES_WILL_CLOSE.md) for the upstream issues this library _closes_, and [UPSTREAM_ISSUES.md](./UPSTREAM_ISSUES.md) for the upstream Bun bugs this library _works around_ (with cleanup instructions for when each is fixed). See [MIGRATING_FROM_ISOLATED_VM.md](./MIGRATING_FROM_ISOLATED_VM.md) for the Node `isolated-vm` to Bun migration path. See [SECURITY.md](./SECURITY.md) for the threat model and hardening guidance. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
+## Quick answers
+
+**Why not Node `isolated-vm`?** It is the right shape for Node/V8, but Bun is JavaScriptCore. `isolated-jsc` ports the isolate-shaped API to Bun/JSC instead of trying to load a V8 addon.
+
+**Why not just use Bun Workers?** Workers are the portable substrate and the fallback backend. This package adds the sandbox product layer: hardened globals, heap limits, timeouts, metrics, error fidelity, TypeScript helpers, pools, and explicit host capability brokers.
+
+**When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
+
 ## What ships today (v0.7.3)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
