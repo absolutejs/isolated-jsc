@@ -62,6 +62,23 @@ describe("runIsolated", () => {
     expect(result.metrics.heapBytes).toBeGreaterThan(0);
   });
 
+  test("returns receipt when requested", async () => {
+    const result = await runIsolated<number>("input.n + 1", {
+      backend: "worker",
+      globals: { input: { n: 41 } },
+      run: { executionId: "run_isolated_receipt", tenant: "tenant-a" },
+      withReceipt: true,
+    });
+
+    expect(result.result).toBe(42);
+    expect(result.receipt).toMatchObject({
+      backend: "worker",
+      executionId: "run_isolated_receipt",
+      status: "success",
+      tenant: "tenant-a",
+    });
+  });
+
   test("uses policy run timeout by default", async () => {
     const err = await rejection(
       runIsolated("while (true) {}", {
@@ -137,6 +154,36 @@ describe("createIsolatedRunner", () => {
       const err = await rejection(runner.run("while (true) {}"));
       expect(err).toBeInstanceOf(TimeoutError);
       expect((err as TimeoutError).timeoutMs).toBe(50);
+    } finally {
+      await runner.dispose();
+    }
+  });
+
+  test("runner returns receipts for source runs and cached callables", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    try {
+      const runReceipt = await runner.run<number>("input.n * 2", {
+        globals: { input: { n: 21 } },
+        run: { executionId: "runner_run_receipt" },
+        withReceipt: true,
+      });
+      expect(runReceipt.result).toBe(42);
+      expect(runReceipt.receipt.executionId).toBe("runner_run_receipt");
+
+      const callReceipt = await runner.call<number>(
+        "double",
+        "(n) => n * 2",
+        [12],
+        {
+          run: { executionId: "runner_call_receipt" },
+          withReceipt: true,
+        },
+      );
+      expect(callReceipt.result).toBe(24);
+      expect(callReceipt.receipt.executionId).toBe("runner_call_receipt");
     } finally {
       await runner.dispose();
     }

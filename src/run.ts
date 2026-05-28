@@ -6,8 +6,10 @@ import type {
   CreateContextOptions,
   Isolate,
   IsolateOptions,
+  RunReceiptOptions,
   RunOptions,
   RunWithMetricsResult,
+  RunWithReceiptResult,
 } from "./types";
 
 export type RunIsolatedOptions = IsolateOptions & {
@@ -24,15 +26,23 @@ export type RunIsolatedOptions = IsolateOptions & {
   /**
    * Per-run options. If omitted, policy/defaultRunOptions still apply.
    */
-  run?: RunOptions;
+  run?: RunReceiptOptions;
   /**
    * Return `{ result, metrics }` instead of the bare result.
    */
   withMetrics?: boolean;
+  /**
+   * Return `{ result, receipt }` instead of the bare result.
+   */
+  withReceipt?: boolean;
 };
 
 export type RunIsolatedWithMetricsOptions = RunIsolatedOptions & {
   withMetrics: true;
+};
+
+export type RunIsolatedWithReceiptOptions = RunIsolatedOptions & {
+  withReceipt: true;
 };
 
 export type CreateIsolatedRunnerOptions = IsolateOptions & {
@@ -52,7 +62,7 @@ export type CreateIsolatedRunnerOptions = IsolateOptions & {
   /**
    * Run defaults applied when the call omits `run`.
    */
-  run?: RunOptions;
+  run?: RunReceiptOptions;
 };
 
 export type IsolatedRunnerRunOptions = {
@@ -63,12 +73,17 @@ export type IsolatedRunnerRunOptions = {
   key?: string;
   context?: CreateContextOptions;
   globals?: Record<string, unknown>;
-  run?: RunOptions;
+  run?: RunReceiptOptions;
   withMetrics?: boolean;
+  withReceipt?: boolean;
 };
 
 export type IsolatedRunnerRunWithMetricsOptions = IsolatedRunnerRunOptions & {
   withMetrics: true;
+};
+
+export type IsolatedRunnerRunWithReceiptOptions = IsolatedRunnerRunOptions & {
+  withReceipt: true;
 };
 
 export type IsolatedRunnerCallOptions = {
@@ -86,12 +101,17 @@ export type IsolatedRunnerCallOptions = {
    * Dynamic inputs should usually be passed via `args`.
    */
   globals?: Record<string, unknown>;
-  run?: RunOptions;
+  run?: RunReceiptOptions;
   withMetrics?: boolean;
+  withReceipt?: boolean;
 };
 
 export type IsolatedRunnerCallWithMetricsOptions = IsolatedRunnerCallOptions & {
   withMetrics: true;
+};
+
+export type IsolatedRunnerCallWithReceiptOptions = IsolatedRunnerCallOptions & {
+  withReceipt: true;
 };
 
 export type IsolatedRunnerPrecompileOptions = {
@@ -128,6 +148,10 @@ export type IsolatedRunner = {
   run: {
     <T = unknown>(
       source: string,
+      options: IsolatedRunnerRunWithReceiptOptions,
+    ): Promise<RunWithReceiptResult<T>>;
+    <T = unknown>(
+      source: string,
       options: IsolatedRunnerRunWithMetricsOptions,
     ): Promise<RunWithMetricsResult<T>>;
     <T = unknown>(
@@ -136,6 +160,12 @@ export type IsolatedRunner = {
     ): Promise<T>;
   };
   call: {
+    <T = unknown>(
+      name: string,
+      source: string,
+      args: unknown[],
+      options: IsolatedRunnerCallWithReceiptOptions,
+    ): Promise<RunWithReceiptResult<T>>;
     <T = unknown>(
       name: string,
       source: string,
@@ -174,17 +204,22 @@ export async function runIsolated<T = unknown>(
 ): Promise<RunWithMetricsResult<T>>;
 export async function runIsolated<T = unknown>(
   source: string,
+  options: RunIsolatedWithReceiptOptions,
+): Promise<RunWithReceiptResult<T>>;
+export async function runIsolated<T = unknown>(
+  source: string,
   options?: RunIsolatedOptions,
 ): Promise<T>;
 export async function runIsolated<T = unknown>(
   source: string,
   options: RunIsolatedOptions = {},
-): Promise<T | RunWithMetricsResult<T>> {
+): Promise<T | RunWithMetricsResult<T> | RunWithReceiptResult<T>> {
   const {
     context: contextOptions,
     globals,
     run,
     withMetrics,
+    withReceipt,
     ...isolateOptions
   } = options;
   const isolate = await createIsolate(isolateOptions);
@@ -197,6 +232,10 @@ export async function runIsolated<T = unknown>(
     }
 
     const script = await isolate.compileScript(source);
+    if (withReceipt === true) {
+      const result = await script.runWithReceipt(context, run);
+      return result as RunWithReceiptResult<T>;
+    }
     if (withMetrics === true) {
       const result = await script.runWithMetrics(context, run);
       return result as RunWithMetricsResult<T>;
@@ -288,7 +327,7 @@ export const createIsolatedRunner = (
   const run = async <T = unknown>(
     source: string,
     runOptions: IsolatedRunnerRunOptions = {},
-  ): Promise<T | RunWithMetricsResult<T>> => {
+  ): Promise<T | RunWithMetricsResult<T> | RunWithReceiptResult<T>> => {
     const key = runOptions.key ?? "default";
     const contextOptions = runOptions.context ?? defaultContext;
     const globals =
@@ -310,6 +349,10 @@ export const createIsolatedRunner = (
           const result = await script.runWithMetrics(context, scriptRunOptions);
           return result as RunWithMetricsResult<T>;
         }
+        if (runOptions.withReceipt === true) {
+          const result = await script.runWithReceipt(context, scriptRunOptions);
+          return result as RunWithReceiptResult<T>;
+        }
         return (await script.run(context, scriptRunOptions)) as T;
       } finally {
         await script.dispose();
@@ -323,7 +366,7 @@ export const createIsolatedRunner = (
     source: string,
     args: unknown[] = [],
     callOptions: IsolatedRunnerCallOptions = {},
-  ): Promise<T | RunWithMetricsResult<T>> => {
+  ): Promise<T | RunWithMetricsResult<T> | RunWithReceiptResult<T>> => {
     const key = callOptions.key ?? "default";
     const cacheKey = `${key}\0${name}`;
     const contextOptions = callOptions.context ?? defaultContext;
@@ -353,6 +396,13 @@ export const createIsolatedRunner = (
             callableRunOptions,
           );
           return result as RunWithMetricsResult<T>;
+        }
+        if (callOptions.withReceipt === true) {
+          const result = await slot.callable.callWithReceipt(
+            args,
+            callableRunOptions,
+          );
+          return result as RunWithReceiptResult<T>;
         }
         return (await slot.callable.call(args, callableRunOptions)) as T;
       } finally {

@@ -162,4 +162,27 @@ describe("Context.compileCallable", () => {
     expect(metrics.cpuMs).toBeGreaterThanOrEqual(0);
     expect(metrics.heapBytes).toBeGreaterThan(0);
   });
+
+  test("callWithReceipt returns result plus receipt metadata", async () => {
+    isolate = await createIsolate();
+    const ctx = await isolate.createContext();
+    const fn = await ctx.compileCallable("(n) => n * 2");
+
+    const { result, receipt } = await fn.callWithReceipt([21], {
+      executionId: "call_receipt",
+      purpose: "tenant-script",
+      tenant: "tenant-a",
+    });
+
+    expect(result).toBe(42);
+    expect(receipt).toMatchObject({
+      backend: "worker",
+      executionId: "call_receipt",
+      outputTruncated: false,
+      purpose: "tenant-script",
+      status: "success",
+      tenant: "tenant-a",
+    });
+    expect(receipt.metrics?.backend).toBe("worker");
+  });
 });

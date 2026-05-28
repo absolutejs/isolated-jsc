@@ -237,9 +237,9 @@ Why now:
 
 ### P1: Policy + receipts foundation
 
-1. Add `resolveIsolatePolicy()`.
-2. Add optional policy presets to `createIsolate`.
-3. Add `runWithReceipt()` for scripts and callables.
+1. Add `resolveIsolatePolicy()`. **Done in 0.8.0.**
+2. Add optional policy presets to `createIsolate`. **Done in 0.8.0.**
+3. Add `runWithReceipt()` for scripts and callables. **Done in 0.8.2.**
 
 Why now:
 

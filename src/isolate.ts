@@ -21,8 +21,10 @@ import {
   IsolateDisposedError,
   MemoryLimitError,
   Reference,
+  type RunReceiptOptions,
   type RunOptions,
   type RunWithMetricsResult,
+  type RunWithReceiptResult,
   type Script,
   TimeoutError,
 } from "./types";
@@ -35,6 +37,11 @@ import type {
   WorkerMessage,
 } from "./protocol";
 import { applyIsolatePolicyOptions } from "./policy";
+import {
+  attachReceipt,
+  createErrorReceipt,
+  createSuccessReceipt,
+} from "./receipt";
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -559,6 +566,27 @@ const makeScript = (
       };
     },
 
+    async runWithReceipt(
+      context: Context,
+      options: RunReceiptOptions = {},
+    ): Promise<RunWithReceiptResult> {
+      const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
+      const base = {
+        isolate,
+        options,
+        startedAt: new Date(),
+        startedMs: performance.now(),
+        timeoutMs,
+      };
+      try {
+        const { result, metrics } = await this.runWithMetrics(context, options);
+        const receipt = createSuccessReceipt(base, result, metrics);
+        return { receipt, result };
+      } catch (error) {
+        throw attachReceipt(error, createErrorReceipt(base, error));
+      }
+    },
+
     dispose,
   };
 };
@@ -620,6 +648,27 @@ const makeCallable = (
         },
         result: fromWire(result),
       };
+    },
+
+    async callWithReceipt(
+      args: unknown[],
+      options: RunReceiptOptions = {},
+    ): Promise<RunWithReceiptResult> {
+      const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
+      const base = {
+        isolate: context.isolate,
+        options,
+        startedAt: new Date(),
+        startedMs: performance.now(),
+        timeoutMs,
+      };
+      try {
+        const { result, metrics } = await this.callWithMetrics(args, options);
+        const receipt = createSuccessReceipt(base, result, metrics);
+        return { receipt, result };
+      } catch (error) {
+        throw attachReceipt(error, createErrorReceipt(base, error));
+      }
     },
 
     dispose,

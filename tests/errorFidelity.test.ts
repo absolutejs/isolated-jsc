@@ -170,4 +170,58 @@ describe("script.runWithMetrics", () => {
     const result = await script.run(context);
     expect(result).toBe("plain"); // not { result: 'plain', metrics: ... }
   });
+
+  test("runWithReceipt returns result plus audit metadata on success", async () => {
+    isolate = await createIsolate({ policy: "tenant-script" });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript("input.n * 2");
+    await context.setGlobal("input", { n: 21 });
+
+    const { result, receipt } = await script.runWithReceipt(context, {
+      capabilityEvents: [
+        { durationMs: 3, status: "success", tool: "lookupOrder" },
+      ],
+      executionId: "exec_test_success",
+      purpose: "ai-tool-call",
+      tenant: "tenant-a",
+      timeout: 500,
+    });
+
+    expect(result).toBe(42);
+    expect(receipt).toMatchObject({
+      backend: "worker",
+      capabilityCalls: [
+        { durationMs: 3, status: "success", tool: "lookupOrder" },
+      ],
+      executionId: "exec_test_success",
+      memoryLimitMb: 256,
+      outputTruncated: false,
+      policy: "tenant-script",
+      purpose: "ai-tool-call",
+      status: "success",
+      tenant: "tenant-a",
+      timeoutMs: 500,
+    });
+    expect(receipt.metrics?.backend).toBe("worker");
+    expect(receipt.outputBytes).toBeGreaterThan(0);
+    expect(Date.parse(receipt.startedAt)).not.toBeNaN();
+    expect(Date.parse(receipt.endedAt)).not.toBeNaN();
+  });
+
+  test("runWithReceipt attaches receipt to thrown errors", async () => {
+    isolate = await createIsolate();
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`throw new Error("boom")`);
+
+    const err = (await rejection(
+      script.runWithReceipt(context, {
+        executionId: "exec_test_error",
+        timeout: 500,
+      }),
+    )) as Error & { receipt?: { status: string; error?: { name: string } } };
+
+    expect(err.message).toBe("boom");
+    expect(err.receipt?.status).toBe("error");
+    expect(err.receipt?.error?.name).toBe("Error");
+  });
 });

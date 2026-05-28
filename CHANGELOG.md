@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.2 - 2026-05-28
+
+### Added
+
+- Added execution receipts for scripts, callables, one-shot `runIsolated()`, and reusable runners. Receipts include execution id, backend, policy, tenant/purpose labels, timing, timeout/memory settings, output size, metrics on success, error summary on failure, and capability-call summaries.
+
 ## 0.8.1 - 2026-05-28
 
 ### Added

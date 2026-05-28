@@ -40,8 +40,10 @@ import {
   Reference,
   type Isolate,
   type IsolateOptions,
+  type RunReceiptOptions,
   type RunOptions,
   type RunWithMetricsResult,
+  type RunWithReceiptResult,
   type Script,
   TimeoutError,
 } from "../types";
@@ -49,6 +51,11 @@ import { openJsc, type JscSymbols } from "./bindings";
 import { hostToJs, jsToHost, makeJsString, readJsString } from "./values";
 import { applyIsolatePolicyOptions } from "../policy";
 import type { ResolvedIsolatePolicy } from "../policy";
+import {
+  attachReceipt,
+  createErrorReceipt,
+  createSuccessReceipt,
+} from "../receipt";
 
 // Same HARDEN_TARGETS the Worker backend uses (T2.1).
 const HARDEN_TARGETS = [
@@ -752,6 +759,30 @@ const makeFfiCallable = (
         result: value,
       };
     },
+    async callWithReceipt(
+      args: unknown[],
+      options: RunReceiptOptions = {},
+    ): Promise<RunWithReceiptResult> {
+      const timeoutMs =
+        options.timeout ?? context.isolate.defaultRunOptions.timeout;
+      const base = {
+        isolate: context.isolate,
+        options,
+        startedAt: new Date(),
+        startedMs: performance.now(),
+        timeoutMs,
+      };
+      try {
+        const { result, metrics } = await callable.callWithMetrics(
+          args,
+          options,
+        );
+        const receipt = createSuccessReceipt(base, result, metrics);
+        return { receipt, result };
+      } catch (error) {
+        throw attachReceipt(error, createErrorReceipt(base, error));
+      }
+    },
     async dispose(): Promise<void> {
       const slot = state.callables.get(callableId);
       if (slot === undefined) return;
@@ -1154,6 +1185,30 @@ const makeFfiScript = (
         result: value,
         metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
       };
+    },
+
+    async runWithReceipt(
+      context: Context,
+      options: RunReceiptOptions = {},
+    ): Promise<RunWithReceiptResult> {
+      const timeoutMs = options.timeout ?? isolate.defaultRunOptions.timeout;
+      const base = {
+        isolate,
+        options,
+        startedAt: new Date(),
+        startedMs: performance.now(),
+        timeoutMs,
+      };
+      try {
+        const { result, metrics } = await script.runWithMetrics(
+          context,
+          options,
+        );
+        const receipt = createSuccessReceipt(base, result, metrics);
+        return { receipt, result };
+      } catch (error) {
+        throw attachReceipt(error, createErrorReceipt(base, error));
+      }
     },
 
     async dispose(): Promise<void> {

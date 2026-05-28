@@ -302,6 +302,62 @@ export type RunWithMetricsResult<T = unknown> = {
   metrics: RunMetrics;
 };
 
+export type ExecutionReceiptStatus = "success" | "error";
+
+export type ExecutionReceiptCapabilityEvent = {
+  durationMs?: number;
+  status: string;
+  tool: string;
+};
+
+export type ExecutionReceiptError = {
+  code?: string;
+  message: string;
+  name: string;
+};
+
+export type ExecutionReceipt = {
+  backend: IsolateBackend;
+  capabilityCalls: ExecutionReceiptCapabilityEvent[];
+  durationMs: number;
+  endedAt: string;
+  error?: ExecutionReceiptError;
+  executionId: string;
+  memoryLimitMb: number;
+  metrics?: RunMetrics;
+  outputBytes?: number;
+  outputTruncated: boolean;
+  policy?: IsolatePolicyName;
+  purpose?: string;
+  startedAt: string;
+  status: ExecutionReceiptStatus;
+  tenant?: string;
+  timeoutMs: number;
+};
+
+export type RunReceiptOptions = RunOptions & {
+  /**
+   * Optional ID for correlating receipts with an app/request log. A random
+   * `crypto.randomUUID()` value is used when omitted.
+   */
+  executionId?: string;
+  /**
+   * Capability audit events captured by a broker during this execution. Pass
+   * the same array you append to from `createCapabilityBroker({ onAudit })`.
+   */
+  capabilityEvents?: readonly ExecutionReceiptCapabilityEvent[];
+  /**
+   * User/application labels copied into the receipt for review workflows.
+   */
+  purpose?: string;
+  tenant?: string;
+};
+
+export type RunWithReceiptResult<T = unknown> = {
+  receipt: ExecutionReceipt;
+  result: T;
+};
+
 /**
  * A precompiled function bound to a specific {@link Context}. Use
  * {@link Context.compileCallable} to create one. Per-call cost is one
@@ -333,6 +389,14 @@ export type Callable = {
     args: unknown[],
     options?: RunOptions,
   ) => Promise<RunWithMetricsResult>;
+  /**
+   * Same as {@link callWithMetrics} but includes a local execution receipt.
+   * On failure, the original error is rethrown with `.receipt` attached.
+   */
+  callWithReceipt: (
+    args: unknown[],
+    options?: RunReceiptOptions,
+  ) => Promise<RunWithReceiptResult>;
   /** Release the function reference. Idempotent. */
   dispose: () => Promise<void>;
 };
@@ -357,6 +421,14 @@ export type Script = {
     context: Context,
     options?: RunOptions,
   ) => Promise<RunWithMetricsResult>;
+  /**
+   * Same as {@link runWithMetrics} but includes a local execution receipt.
+   * On failure, the original error is rethrown with `.receipt` attached.
+   */
+  runWithReceipt: (
+    context: Context,
+    options?: RunReceiptOptions,
+  ) => Promise<RunWithReceiptResult>;
   dispose: () => Promise<void>;
 };
 
