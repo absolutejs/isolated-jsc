@@ -58,13 +58,14 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Hardened sandbox by default (T2.1, new in 0.1).** Host-capability globals — `fetch`, `Bun`, `process`, `Worker`, `WebSocket`, host `postMessage` / `addEventListener`, `navigator`, storage, … — are stripped from the sandbox. User code can't reach them via bare lookup, `globalThis.X`, `this.X`, or direct `eval('X')`. Pure JS built-ins (Math, JSON, Promise, the typed-array suite) and safe Web primitives (URL, TextEncoder, Web Crypto, setTimeout, console) stay reachable. Opt out per-isolate via `harden: false` for trusted code, or expose specific capabilities via `unsafelyExposeGlobals: ['fetch']`.
 - **Host-callable `Reference`s.** Expose host functions to the isolate. Worker backend: calls always round-trip via async message-passing (use `await` on the isolate side). FFI backend (0.3+): sync host fns return their value directly through a per-Reference `JSCallback`. Async (Promise-returning) host fns work too on FFI (0.4+) — the runner alternately yields to Bun's event loop and drains JSC's microtask queue until the promise settles, bounded by `Script.run`'s `timeout`.
 - **`ExternalCopy`** for marking large host-side values for cheap pass-through.
-- **Optional console capture.** `onConsole` hook to route isolate `console.log` calls back to the host (default: dropped, so untrusted code can't pollute host logs).
+- **Optional bounded console capture.** `onConsole` routes isolate `console.log` calls back to the host. `maxConsoleEntries` and `maxConsoleBytes` bound forwarded logs, and receipts report overflow.
 - **First-class isolate pool (T2.2, new in 0.1).** `createIsolatePool({ isolate, maxSize, idleMs, recycleAfter })` returns a keyed pool — lazy spawn per key, reuse across calls, LRU eviction at cap, transparent re-spawn after isolate self-termination, configurable post-N-call recycle to bound JSC heap creep. Replaces the bespoke per-tenant lookup-or-spawn map every consumer rolls.
 - **Context seed + snapshot (T2.3, new in 0.1).** `createContext({ seed, snapshot })` runs setup code (assign onto `this`) and restores cloneable data state from a previous `context.snapshot()`. Pair them to fork a fresh context from a prior one's accumulated state (the AI-agent-across-turns pattern).
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 - **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with execution id, backend, policy, resource settings, timing, output size, and capability-call summaries.
 - **Result size limits.** Pass `maxResultBytes` in run options to reject oversized successful outputs with `ResultSizeError` before application code accepts them.
+- **Console output limits.** Pass `maxConsoleEntries` / `maxConsoleBytes` when creating an isolate to drop excess captured console events and surface overflow flags in receipts.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 - **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
 - **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
@@ -133,6 +134,8 @@ import {
 const isolate: Isolate = await createIsolate({
   memoryLimit: 256, // MB; default 256
   bootstrap: "var foo = 1", // optional — runs once in the worker
+  maxConsoleEntries: 100,
+  maxConsoleBytes: 64_000,
   onConsole: (level, args) => console.log(`[iso/${level}]`, ...args),
 });
 

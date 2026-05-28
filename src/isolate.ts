@@ -37,6 +37,12 @@ import type {
   WorkerEvent,
   WorkerMessage,
 } from "./protocol";
+import {
+  createConsoleLimitState,
+  recordConsoleEvent,
+  snapshotConsoleLimits,
+  type ConsoleLimitState,
+} from "./consoleLimits";
 import { applyIsolatePolicyOptions } from "./policy";
 import {
   attachReceipt,
@@ -73,6 +79,7 @@ type IsolateState = {
   refs: Map<number, (...args: unknown[]) => unknown>;
   nextRefId: number;
   onConsole: IsolateOptions["onConsole"];
+  consoleLimits: ConsoleLimitState;
   defaultRunOptions: Required<Pick<RunOptions, "timeout">>;
   policy: ResolvedIsolatePolicy | undefined;
 };
@@ -215,8 +222,12 @@ const handleEvent = (state: IsolateState, event: WorkerEvent): void => {
       // init ack — pending init promise (id 0) is fulfilled elsewhere
       return;
     case "console":
-      if (state.onConsole !== undefined)
+      if (
+        state.onConsole !== undefined &&
+        recordConsoleEvent(state.consoleLimits, event.args)
+      ) {
         state.onConsole(event.level, event.args);
+      }
       return;
     case "refCall": {
       const fn = state.refs.get(event.refId);
@@ -291,6 +302,10 @@ export const createIsolateWorker = async (
     refs: new Map(),
     nextRefId: 1,
     onConsole: effectiveOptions.onConsole,
+    consoleLimits: createConsoleLimitState({
+      maxBytes: effectiveOptions.maxConsoleBytes,
+      maxEntries: effectiveOptions.maxConsoleEntries,
+    }),
     defaultRunOptions: {
       timeout: effectiveOptions.defaultRunOptions?.timeout ?? 1000,
     },
@@ -587,6 +602,8 @@ const makeScript = (
     ): Promise<RunWithReceiptResult> {
       const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const base = {
+        consoleEnd: () => snapshotConsoleLimits(state.consoleLimits),
+        consoleStart: snapshotConsoleLimits(state.consoleLimits),
         isolate,
         options,
         startedAt: new Date(),
@@ -673,6 +690,8 @@ const makeCallable = (
     ): Promise<RunWithReceiptResult> {
       const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const base = {
+        consoleEnd: () => snapshotConsoleLimits(state.consoleLimits),
+        consoleStart: snapshotConsoleLimits(state.consoleLimits),
         isolate: context.isolate,
         options,
         startedAt: new Date(),

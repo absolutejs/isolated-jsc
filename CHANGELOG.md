@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.4 - 2026-05-28
+
+### Added
+
+- Added console output boundaries: `maxConsoleEntries` and `maxConsoleBytes` limit forwarded `onConsole` events, and execution receipts now include console entry/byte counts plus overflow flags.
+
 ## 0.8.3 - 2026-05-28
 
 ### Added

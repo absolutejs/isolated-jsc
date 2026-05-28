@@ -65,6 +65,7 @@ export type {
   IsolateOptions,
   ExecutionReceipt,
   ExecutionReceiptCapabilityEvent,
+  ExecutionReceiptConsole,
   ExecutionReceiptError,
   ExecutionReceiptStatus,
   RunReceiptOptions,

@@ -6,6 +6,8 @@ import type {
   RunMetrics,
   RunReceiptOptions,
 } from "./types";
+import type { ConsoleLimitSnapshot } from "./consoleLimits";
+import { consoleDelta } from "./consoleLimits";
 import { estimateResultBytes } from "./resultLimits";
 
 const receiptError = (error: unknown): ExecutionReceiptError => {
@@ -37,6 +39,8 @@ const capabilityCalls = (
   }));
 
 export type ReceiptBase = {
+  consoleStart?: ConsoleLimitSnapshot;
+  consoleEnd?: () => ConsoleLimitSnapshot;
   isolate: Isolate;
   options: RunReceiptOptions;
   startedAt: Date;
@@ -50,9 +54,14 @@ export const createSuccessReceipt = (
   metrics: RunMetrics,
 ): ExecutionReceipt => {
   const endedAt = new Date();
+  const console = consoleDelta(base.consoleStart, base.consoleEnd?.());
   const receipt: ExecutionReceipt = {
     backend: base.isolate.backend,
     capabilityCalls: capabilityCalls(base.options.capabilityEvents),
+    console: {
+      ...console,
+      truncated: console.byteLimitExceeded || console.entryLimitExceeded,
+    },
     durationMs: Math.round(performance.now() - base.startedMs),
     endedAt: endedAt.toISOString(),
     executionId: base.options.executionId ?? randomExecutionId(),
@@ -78,9 +87,14 @@ export const createErrorReceipt = (
   error: unknown,
 ): ExecutionReceipt => {
   const endedAt = new Date();
+  const console = consoleDelta(base.consoleStart, base.consoleEnd?.());
   const receipt: ExecutionReceipt = {
     backend: base.isolate.backend,
     capabilityCalls: capabilityCalls(base.options.capabilityEvents),
+    console: {
+      ...console,
+      truncated: console.byteLimitExceeded || console.entryLimitExceeded,
+    },
     durationMs: Math.round(performance.now() - base.startedMs),
     endedAt: endedAt.toISOString(),
     error: receiptError(error),

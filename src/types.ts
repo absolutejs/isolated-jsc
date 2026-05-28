@@ -68,6 +68,16 @@ export type IsolateOptions = {
    */
   onConsole?: (level: "log" | "warn" | "error", args: unknown[]) => void;
   /**
+   * Maximum number of console events to forward through `onConsole` for this
+   * isolate. Extra entries are dropped and reflected in execution receipts.
+   */
+  maxConsoleEntries?: number;
+  /**
+   * Maximum JSON-encoded console payload bytes to forward through `onConsole`
+   * for this isolate. Extra entries are dropped and reflected in receipts.
+   */
+  maxConsoleBytes?: number;
+  /**
    * Strip host-capability globals from the sandbox. Default `true`. When on,
    * the sandbox cannot reach `fetch`, `Bun`, `process`, `Worker`,
    * `WebSocket`, `navigator`, host `postMessage`/`addEventListener`, etc.
@@ -322,9 +332,18 @@ export type ExecutionReceiptError = {
   name: string;
 };
 
+export type ExecutionReceiptConsole = {
+  byteLimitExceeded: boolean;
+  bytes: number;
+  entries: number;
+  entryLimitExceeded: boolean;
+  truncated: boolean;
+};
+
 export type ExecutionReceipt = {
   backend: IsolateBackend;
   capabilityCalls: ExecutionReceiptCapabilityEvent[];
+  console: ExecutionReceiptConsole;
   durationMs: number;
   endedAt: string;
   error?: ExecutionReceiptError;

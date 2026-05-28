@@ -243,4 +243,50 @@ describe("script.runWithMetrics", () => {
     expect(err.observedBytes).toBeGreaterThan(16);
     expect(err.receipt?.error?.code).toBe("RESULT_SIZE_LIMIT");
   });
+
+  test("runWithReceipt reports console entry overflow", async () => {
+    const captured: unknown[][] = [];
+    isolate = await createIsolate({
+      maxConsoleEntries: 1,
+      onConsole: (_level, args) => captured.push(args),
+    });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`
+      console.log("first");
+      console.log("second");
+      42
+    `);
+
+    const { result, receipt } = await script.runWithReceipt(context);
+
+    expect(result).toBe(42);
+    expect(captured).toEqual([["first"]]);
+    expect(receipt.console.entries).toBe(1);
+    expect(receipt.console.entryLimitExceeded).toBe(true);
+    expect(receipt.console.byteLimitExceeded).toBe(false);
+    expect(receipt.console.truncated).toBe(true);
+  });
+
+  test("runWithReceipt reports console byte overflow", async () => {
+    const captured: unknown[][] = [];
+    isolate = await createIsolate({
+      maxConsoleBytes: 8,
+      onConsole: (_level, args) => captured.push(args),
+    });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`
+      console.log("this message is too large");
+      42
+    `);
+
+    const { result, receipt } = await script.runWithReceipt(context);
+
+    expect(result).toBe(42);
+    expect(captured).toEqual([]);
+    expect(receipt.console.entries).toBe(0);
+    expect(receipt.console.bytes).toBe(0);
+    expect(receipt.console.byteLimitExceeded).toBe(true);
+    expect(receipt.console.entryLimitExceeded).toBe(false);
+    expect(receipt.console.truncated).toBe(true);
+  });
 });
