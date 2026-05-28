@@ -191,6 +191,10 @@ const SYMBOL_SHAPE = {
     args: [FFIType.u64, FFIType.u64, FFIType.u64],
     returns: FFIType.u64,
   },
+  JSObjectIsFunction: {
+    args: [FFIType.u64, FFIType.u64],
+    returns: FFIType.bool,
+  },
   JSObjectCallAsFunction: {
     args: [
       FFIType.u64, // ctx

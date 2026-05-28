@@ -33,6 +33,9 @@ import {
   type Callable,
   CompileError,
   type Context,
+  type ContextCheckpoint,
+  type ContextCheckpointOptions,
+  type ContextCheckpointSkippedKey,
   type CreateContextOptions,
   ExternalCopy,
   IsolateDisposedError,
@@ -57,6 +60,64 @@ import {
   createSuccessReceipt,
 } from "../receipt";
 import { enforceResultSize } from "../resultLimits";
+
+const encodedBytes = (value: unknown): number | undefined => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return undefined;
+  }
+};
+
+const createDataCheckpoint = (
+  backend: ContextCheckpoint["backend"],
+  entries: Iterable<[string, unknown]>,
+  options?: ContextCheckpointOptions,
+): ContextCheckpoint => {
+  const data: Record<string, unknown> = {};
+  const skipped: ContextCheckpointSkippedKey[] = [];
+  let byteLength = encodedBytes(data) ?? 2;
+
+  for (const [name, value] of entries) {
+    if (name === "globalThis") continue;
+    if (options?.include !== undefined && !options.include.includes(name)) {
+      skipped.push({ key: name, reason: "excluded" });
+      continue;
+    }
+    if ((options?.exclude ?? []).includes(name)) {
+      skipped.push({ key: name, reason: "excluded" });
+      continue;
+    }
+    try {
+      structuredClone(value);
+    } catch {
+      skipped.push({ key: name, reason: "not-clonable" });
+      continue;
+    }
+    const nextData = { ...data, [name]: value };
+    const nextBytes = encodedBytes(nextData);
+    if (nextBytes === undefined) {
+      skipped.push({ key: name, reason: "not-clonable" });
+      continue;
+    }
+    if (options?.maxBytes !== undefined && nextBytes > options.maxBytes) {
+      skipped.push({ key: name, reason: "over-max-bytes", bytes: nextBytes });
+      continue;
+    }
+    data[name] = value;
+    byteLength = nextBytes;
+  }
+
+  return {
+    backend,
+    byteLength,
+    data,
+    included: Object.keys(data).length,
+    schemaVersion: 1,
+    skipped,
+    skippedCount: skipped.length,
+  };
+};
 
 // Same HARDEN_TARGETS the Worker backend uses (T2.1).
 const HARDEN_TARGETS = [
@@ -533,11 +594,12 @@ export const createIsolateFfi = async (
         applyHarden(state, ctx, effectiveOptions.unsafelyExposeGlobals ?? []);
       }
 
-      // Restore snapshot first so seed code can read it.
-      if (opts?.snapshot !== undefined) {
+      // Restore checkpoint/snapshot first so seed code can read it.
+      const restoredData = opts?.checkpoint?.data ?? opts?.snapshot;
+      if (restoredData !== undefined) {
         const global = symbols.JSContextGetGlobalObject(ctx);
         const exc = new BigUint64Array(1);
-        for (const [name, value] of Object.entries(opts.snapshot)) {
+        for (const [name, value] of Object.entries(restoredData)) {
           const propName = makeJsString(symbols, name);
           const jsValue = hostToJs(symbols, ctx, value);
           symbols.JSObjectSetProperty(
@@ -712,12 +774,19 @@ const makeFfiContext = (
     },
 
     async snapshot(): Promise<Record<string, unknown>> {
+      return (await this.checkpoint()).data;
+    },
+
+    async checkpoint(
+      options?: ContextCheckpointOptions,
+    ): Promise<ContextCheckpoint> {
       const ctx = state.contexts.get(contextId);
       if (ctx === undefined) throw new IsolateDisposedError();
       const global = symbols.JSContextGetGlobalObject(ctx);
       const names = symbols.JSObjectCopyPropertyNames(ctx, global);
       const count = Number(symbols.JSPropertyNameArrayGetCount(names));
-      const out: Record<string, unknown> = {};
+      const entries: Array<[string, unknown]> = [];
+      const skipped: ContextCheckpointSkippedKey[] = [];
       const exc = new BigUint64Array(1);
       for (let i = 0; i < count; i++) {
         const nameRef = symbols.JSPropertyNameArrayGetNameAtIndex(
@@ -725,8 +794,15 @@ const makeFfiContext = (
           BigInt(i),
         );
         const name = readJsString(symbols, nameRef);
-        // Skip globalThis self-reference (and any HARDEN_TARGETS we shadowed).
         if (name === "globalThis") continue;
+        if (options?.include !== undefined && !options.include.includes(name)) {
+          entries.push([name, undefined]);
+          continue;
+        }
+        if ((options?.exclude ?? []).includes(name)) {
+          entries.push([name, undefined]);
+          continue;
+        }
         const value = symbols.JSObjectGetProperty(
           ctx,
           global,
@@ -734,20 +810,35 @@ const makeFfiContext = (
           BigInt(ptr(exc)),
         );
         if (value === 0n) continue;
-        // Skip functions and other non-clonable values — same contract as
-        // the Worker backend's snapshot.
+        if (
+          symbols.JSValueIsObject(ctx, value) &&
+          symbols.JSObjectIsFunction(ctx, value)
+        ) {
+          skipped.push({ key: name, reason: "not-clonable" });
+          continue;
+        }
         try {
           const host = jsToHost(symbols, ctx, value);
-          if (typeof host === "function") continue;
-          // structuredClone to catch un-clonable values
-          structuredClone(host);
-          out[name] = host;
+          if (host === undefined && !symbols.JSValueIsUndefined(ctx, value)) {
+            skipped.push({ key: name, reason: "not-clonable" });
+            continue;
+          }
+          if (typeof host === "function") {
+            skipped.push({ key: name, reason: "not-clonable" });
+            continue;
+          }
+          entries.push([name, host]);
         } catch {
-          // not cloneable
+          skipped.push({ key: name, reason: "not-clonable" });
         }
       }
       symbols.JSPropertyNameArrayRelease(names);
-      return out;
+      const checkpoint = createDataCheckpoint("ffi", entries, options);
+      return {
+        ...checkpoint,
+        skipped: [...skipped, ...checkpoint.skipped],
+        skippedCount: skipped.length + checkpoint.skippedCount,
+      };
     },
 
     async dispose(): Promise<void> {

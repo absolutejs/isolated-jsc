@@ -60,7 +60,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **`ExternalCopy`** for marking large host-side values for cheap pass-through.
 - **Optional bounded console capture.** `onConsole` routes isolate `console.log` calls back to the host. `maxConsoleEntries` and `maxConsoleBytes` bound forwarded logs, and receipts report overflow.
 - **First-class isolate pool (T2.2, new in 0.1).** `createIsolatePool({ isolate, maxSize, idleMs, recycleAfter })` returns a keyed pool — lazy spawn per key, reuse across calls, LRU eviction at cap, transparent re-spawn after isolate self-termination, configurable post-N-call recycle to bound JSC heap creep. Replaces the bespoke per-tenant lookup-or-spawn map every consumer rolls.
-- **Context seed + data snapshot (T2.3, new in 0.1).** `createContext({ seed, snapshot })` runs setup code (assign onto `this`) and restores cloneable data state from a previous `context.snapshot()`. Pair them to fork a fresh context from a prior one's accumulated state (the AI-agent-across-turns pattern). This is a data checkpoint, not a JSC heap pause/resume image; see [SNAPSHOT_RESEARCH.md](./SNAPSHOT_RESEARCH.md).
+- **Context seed + data checkpoint (T2.3, new in 0.1; expanded in 0.8.19).** `createContext({ seed, snapshot })` still restores old plain snapshots, and `createContext({ seed, checkpoint })` restores versioned checkpoints from `context.checkpoint({ maxBytes, include, exclude })`. Checkpoints carry `schemaVersion`, backend, byte length, included/skipped counts, and skipped-key reasons. This is a data checkpoint, not a JSC heap pause/resume image; see [SNAPSHOT_RESEARCH.md](./SNAPSHOT_RESEARCH.md).
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 - **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with `schemaVersion: 1`, execution id, backend, policy, resource settings, timing, output size, bounded capability-call summaries, and dropped-event counts.
@@ -197,6 +197,19 @@ const unwrap = await compileTypeScriptCallableFile(
   "./tenant-code/unwrap.ts",
 );
 await unwrap.call([{ value: "typed file" }]); // "typed file"
+
+// Explicit data checkpoints for turn/session handoff. These capture
+// structured-cloneable own globals only, not a JSC heap image.
+const checkpoint = await context.checkpoint({
+  exclude: ["scratch"],
+  maxBytes: 64 * 1024,
+});
+const resumed = await isolate.createContext({
+  checkpoint,
+  seed: "this.double = (n) => n * 2",
+});
+// checkpoint.schemaVersion === 1
+// checkpoint.skipped === [{ key, reason, bytes? }, ...]
 
 type TenantContext = { id: string };
 type LookupOrderInput = { id: string };

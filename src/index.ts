@@ -80,6 +80,10 @@ export {
 export type {
   Callable,
   Context,
+  ContextCheckpoint,
+  ContextCheckpointOptions,
+  ContextCheckpointSkippedKey,
+  ContextCheckpointSkippedReason,
   CreateContextOptions,
   CreateIsolate,
   Isolate,

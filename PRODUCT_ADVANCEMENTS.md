@@ -229,14 +229,14 @@ context serializer. See `SNAPSHOT_RESEARCH.md`.
 Do not market `Context.snapshot()` as a heap snapshot. It is a data checkpoint:
 structured-cloneable own properties out, fresh context + seed back in.
 
-Next product step:
+Shipped in `0.8.19`:
 
-- Add an explicit `context.checkpoint()` / `createContext({ checkpoint })`
+- Added an explicit `context.checkpoint()` / `createContext({ checkpoint })`
   wrapper around the existing data-snapshot contract.
-- Include `schemaVersion`, backend, policy, byte size, included/skipped counts,
-  and skipped-key reasons.
-- Add `maxBytes`, `include`, and `exclude` controls so checkpoints are bounded
-  and auditable.
+- Included `schemaVersion`, backend, byte size, included/skipped counts, and
+  skipped-key reasons.
+- Added `maxBytes`, `include`, and `exclude` controls so checkpoints are
+  bounded and auditable.
 - Keep functions, closures, prototypes, host `Reference`s, pending promises,
   and call stacks out of scope.
 

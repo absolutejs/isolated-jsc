@@ -85,10 +85,10 @@ today:
 | Bytecode/source compile cache | JSC has internal bytecode-cache machinery, but no stable public C API for this package to consume | Track as upstream/private-API research only |
 | Heap pause/resume             | No public context/group/heap serializer                                                           | Do not promise                              |
 
-## Next implementation target
+## Implemented checkpoint API
 
-Add a stronger checkpoint API around the existing `Context.snapshot()` contract,
-without changing the meaning:
+`0.8.19` adds a stronger checkpoint API around the existing
+`Context.snapshot()` contract, without changing the meaning:
 
 ```ts
 const checkpoint = await context.checkpoint({
@@ -105,14 +105,12 @@ const resumed = await isolate.createContext({
 This should be a typed, bounded, receipt-friendly wrapper around data state:
 
 - `schemaVersion: 1`;
-- `createdAt`;
 - `backend`;
-- `policy`;
 - `byteLength`;
 - included/skipped key counts;
-- skipped key reasons: `function`, `symbol`, `host-reference`, `json-error`,
-  `size-limit`, `excluded`;
-- restore validation before executing `seed`.
+- skipped key reasons: `not-clonable`, `over-max-bytes`, `excluded`;
+- restore through `createContext({ checkpoint, seed })`, with checkpoint data
+  installed before `seed` runs.
 
 This gives users a credible "resume tenant/agent state" primitive while staying
 honest about JavaScriptCore's public API.

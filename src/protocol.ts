@@ -27,6 +27,12 @@ export type WireError = {
   props?: Record<string, unknown>;
 };
 
+export type WireCheckpointOptions = {
+  maxBytes?: number;
+  include?: string[];
+  exclude?: string[];
+};
+
 /** First message the host sends after spawning the worker. The worker waits
  * for this before processing any other op. */
 export type WorkerInitMessage = {
@@ -57,8 +63,15 @@ export type HostRequest =
       op: "createContext";
       seed?: string;
       snapshot?: Record<string, unknown>;
+      checkpoint?: { data: Record<string, unknown> };
     }
   | { id: number; op: "snapshotContext"; contextId: number }
+  | {
+      id: number;
+      op: "checkpointContext";
+      contextId: number;
+      options?: WireCheckpointOptions;
+    }
   | {
       id: number;
       op: "setGlobal";

@@ -220,6 +220,51 @@ export type CreateContextOptions = {
    * carry accumulated data state across context lifecycles.
    */
   snapshot?: Record<string, unknown>;
+  /**
+   * Versioned data checkpoint captured with {@link Context.checkpoint}. Restores
+   * `checkpoint.data` before `seed` runs. Prefer this over `snapshot` when you
+   * need byte counts, included/skipped counts, and skip reasons.
+   */
+  checkpoint?: ContextCheckpoint;
+};
+
+export type ContextCheckpointSkippedReason =
+  | "excluded"
+  | "not-clonable"
+  | "over-max-bytes";
+
+export type ContextCheckpointSkippedKey = {
+  key: string;
+  reason: ContextCheckpointSkippedReason;
+  bytes?: number;
+};
+
+export type ContextCheckpointOptions = {
+  /**
+   * Maximum encoded size of the checkpoint `data` payload. When adding a key
+   * would exceed this budget, that key is skipped with reason
+   * `"over-max-bytes"` and checkpointing continues.
+   */
+  maxBytes?: number;
+  /**
+   * Only include these own global property names. Omitted means every
+   * structured-cloneable own property is eligible.
+   */
+  include?: string[];
+  /**
+   * Exclude these own global property names after `include` is applied.
+   */
+  exclude?: string[];
+};
+
+export type ContextCheckpoint = {
+  schemaVersion: 1;
+  backend: IsolateBackend;
+  data: Record<string, unknown>;
+  byteLength: number;
+  included: number;
+  skipped: ContextCheckpointSkippedKey[];
+  skippedCount: number;
 };
 
 /** An execution context within an {@link Isolate} — a fresh global scope. */
@@ -268,6 +313,18 @@ export type Context = {
    * the code half.
    */
   snapshot: () => Promise<Record<string, unknown>>;
+  /**
+   * Capture a versioned, bounded data checkpoint for this context. This is the
+   * explicit form of {@link Context.snapshot}: it includes metadata for
+   * backend, encoded byte length, included count, skipped count, and per-key
+   * skip reasons.
+   *
+   * This is still NOT a JavaScriptCore heap pause/resume image. It captures
+   * structured-cloneable own global properties only.
+   */
+  checkpoint: (
+    options?: ContextCheckpointOptions,
+  ) => Promise<ContextCheckpoint>;
   /** Dispose just this context (the isolate stays alive). */
   dispose: () => Promise<void>;
 };

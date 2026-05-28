@@ -422,6 +422,7 @@ export const createIsolateWorker = async (
       await send<number>(state, {
         id,
         op: "createContext",
+        checkpoint: options?.checkpoint,
         seed: options?.seed,
         snapshot: options?.snapshot,
       });
@@ -507,6 +508,29 @@ const makeContext = (
       const value = fromWire(wire);
       if (value === null || typeof value !== "object") return {};
       return value as Record<string, unknown>;
+    },
+
+    async checkpoint(options) {
+      const id = state.nextId++;
+      const wire = await send<WireValue>(state, {
+        id,
+        op: "checkpointContext",
+        contextId,
+        options,
+      });
+      const value = fromWire(wire);
+      if (value === null || typeof value !== "object") {
+        return {
+          backend: "worker",
+          byteLength: 2,
+          data: {},
+          included: 0,
+          schemaVersion: 1,
+          skipped: [],
+          skippedCount: 0,
+        };
+      }
+      return value as Awaited<ReturnType<Context["checkpoint"]>>;
     },
 
     async dispose(): Promise<void> {

@@ -122,3 +122,59 @@ describe("context.snapshot()", () => {
     expect(snap.x).toBe(1);
   });
 });
+
+describe("context.checkpoint()", () => {
+  test("returns versioned checkpoint metadata and restores via createContext", async () => {
+    isolate = await createIsolate({ backend: "worker" });
+    const context = await isolate.createContext({
+      seed: `
+        this.keep = { n: 21 };
+        this.skip = function () { return 1 };
+      `,
+    });
+
+    const checkpoint = await context.checkpoint();
+    expect(checkpoint.schemaVersion).toBe(1);
+    expect(checkpoint.backend).toBe("worker");
+    expect(checkpoint.data.keep).toEqual({ n: 21 });
+    expect(checkpoint.included).toBe(1);
+    expect(checkpoint.byteLength).toBeGreaterThan(0);
+    expect(checkpoint.skipped).toContainEqual({
+      key: "skip",
+      reason: "not-clonable",
+    });
+
+    const restored = await isolate.createContext({
+      checkpoint,
+      seed: "this.answer = keep.n * 2",
+    });
+    const script = await isolate.compileScript("answer");
+    expect(await script.run(restored)).toBe(42);
+  });
+
+  test("include, exclude, and maxBytes report skipped-key reasons", async () => {
+    isolate = await createIsolate({ backend: "worker" });
+    const context = await isolate.createContext({
+      seed: `
+        this.a = "small";
+        this.b = "also small";
+        this.c = "x".repeat(200);
+      `,
+    });
+
+    const filtered = await context.checkpoint({
+      exclude: ["b"],
+      include: ["a", "b", "c"],
+      maxBytes: 40,
+    });
+
+    expect(filtered.data).toEqual({ a: "small" });
+    expect(filtered.skipped).toEqual(
+      expect.arrayContaining([
+        { key: "b", reason: "excluded" },
+        expect.objectContaining({ key: "c", reason: "over-max-bytes" }),
+      ]),
+    );
+    expect(filtered.skippedCount).toBe(2);
+  });
+});

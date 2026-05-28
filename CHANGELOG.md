@@ -2,6 +2,14 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.19 - 2026-05-28
+
+### Added
+
+- Added explicit `context.checkpoint(options)` data checkpoints with `schemaVersion`, backend, byte length, included count, skipped count, and per-key skip reasons.
+- Added `createContext({ checkpoint })` restore support alongside the existing `snapshot` restore path.
+- Added checkpoint controls for `maxBytes`, `include`, and `exclude`.
+
 ## 0.8.18 - 2026-05-28
 
 ### Added

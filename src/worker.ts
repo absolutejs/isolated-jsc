@@ -30,9 +30,74 @@ import type {
   WorkerMessage,
   WorkerReply,
 } from "./protocol";
+import type {
+  ContextCheckpoint,
+  ContextCheckpointOptions,
+  ContextCheckpointSkippedKey,
+} from "./types";
 
 declare const self: Worker & {
   postMessage: (message: WorkerMessage) => void;
+};
+
+const encodedBytes = (value: unknown): number | undefined => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return undefined;
+  }
+};
+
+const createDataCheckpoint = (
+  backend: ContextCheckpoint["backend"],
+  entries: Iterable<[string, unknown]>,
+  options?: ContextCheckpointOptions,
+): ContextCheckpoint => {
+  const data: Record<string, unknown> = {};
+  const skipped: ContextCheckpointSkippedKey[] = [];
+  let byteLength = encodedBytes(data) ?? 2;
+
+  for (const [name, value] of entries) {
+    if (name === "globalThis") continue;
+    if (options?.include !== undefined && !options.include.includes(name)) {
+      skipped.push({ key: name, reason: "excluded" });
+      continue;
+    }
+    if ((options?.exclude ?? []).includes(name)) {
+      skipped.push({ key: name, reason: "excluded" });
+      continue;
+    }
+
+    try {
+      structuredClone(value);
+    } catch {
+      skipped.push({ key: name, reason: "not-clonable" });
+      continue;
+    }
+
+    const nextData = { ...data, [name]: value };
+    const nextBytes = encodedBytes(nextData);
+    if (nextBytes === undefined) {
+      skipped.push({ key: name, reason: "not-clonable" });
+      continue;
+    }
+    if (options?.maxBytes !== undefined && nextBytes > options.maxBytes) {
+      skipped.push({ key: name, reason: "over-max-bytes", bytes: nextBytes });
+      continue;
+    }
+    data[name] = value;
+    byteLength = nextBytes;
+  }
+
+  return {
+    backend,
+    byteLength,
+    data,
+    included: Object.keys(data).length,
+    schemaVersion: 1,
+    skipped,
+    skippedCount: skipped.length,
+  };
 };
 
 // ─── Infrastructure capture ─────────────────────────────────────────────────
@@ -478,9 +543,10 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
         }
         case "createContext": {
           const sandbox = newSandbox();
-          // Restore snapshot first so seed code can read accumulated state.
-          if (request.snapshot !== undefined) {
-            for (const [name, value] of Object.entries(request.snapshot)) {
+          // Restore checkpoint/snapshot first so seed code can read accumulated state.
+          const restoredData = request.checkpoint?.data ?? request.snapshot;
+          if (restoredData !== undefined) {
+            for (const [name, value] of Object.entries(restoredData)) {
               sandbox[name] = value;
             }
           }
@@ -498,29 +564,35 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           const sandbox = contexts.get(request.contextId);
           if (sandbox === undefined)
             throw new Error(`unknown contextId ${request.contextId}`);
-          // Iterate OWN properties only (the prototype carries the
-          // hardened-undefined shadows and the inherited globalThis chain;
-          // neither belongs in user data). For each own property, attempt
-          // a structured-clone round-trip; if it throws (function, host
-          // Reference, etc.), skip silently.
-          const snapshot: Record<string, unknown> = {};
-          for (const name of Object.getOwnPropertyNames(sandbox)) {
-            if (name === "globalThis") continue;
-            const value = (sandbox as Record<string, unknown>)[name];
-            try {
-              // structuredClone is the contract test for cloneability;
-              // we keep the original value (not the clone) so identity
-              // is preserved for the host's structured clone over postMessage.
-              structuredClone(value);
-              snapshot[name] = value;
-            } catch {
-              // not cloneable — skip
-            }
-          }
+          const checkpoint = createDataCheckpoint(
+            "worker",
+            Object.getOwnPropertyNames(sandbox).map((name) => [
+              name,
+              (sandbox as Record<string, unknown>)[name],
+            ]),
+          );
           return {
             id: request.id,
             ok: true,
-            result: { kind: "value", value: snapshot },
+            result: { kind: "value", value: checkpoint.data },
+          };
+        }
+        case "checkpointContext": {
+          const sandbox = contexts.get(request.contextId);
+          if (sandbox === undefined)
+            throw new Error(`unknown contextId ${request.contextId}`);
+          const checkpoint = createDataCheckpoint(
+            "worker",
+            Object.getOwnPropertyNames(sandbox).map((name) => [
+              name,
+              (sandbox as Record<string, unknown>)[name],
+            ]),
+            request.options,
+          );
+          return {
+            id: request.id,
+            ok: true,
+            result: { kind: "value", value: checkpoint },
           };
         }
         case "setGlobal": {
