@@ -159,6 +159,8 @@ export const applyIsolatePolicyOptions = (
   setIfDefined(applied, "harden", explicit.harden);
   setIfDefined(applied, "memoryLimit", explicit.memoryLimit);
   setIfDefined(applied, "bootstrap", explicit.bootstrap);
+  setIfDefined(applied, "maxConsoleBytes", explicit.maxConsoleBytes);
+  setIfDefined(applied, "maxConsoleEntries", explicit.maxConsoleEntries);
   setIfDefined(applied, "onConsole", explicit.onConsole);
   setIfDefined(
     applied,

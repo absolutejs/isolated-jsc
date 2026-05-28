@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.5 - 2026-05-28
+
+### Fixed
+
+- Preserved explicit `maxConsoleEntries` and `maxConsoleBytes` when applying policy presets.
+
 ## 0.8.4 - 2026-05-28
 
 ### Added

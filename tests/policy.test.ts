@@ -115,4 +115,26 @@ describe("createIsolate policy", () => {
     expect((err as TimeoutError).timeoutMs).toBe(50);
     expect(isolate.isDisposed).toBe(true);
   });
+
+  test("preserves explicit console limits when applying policy defaults", async () => {
+    const captured: unknown[][] = [];
+    const isolate = await createIsolate({
+      backend: "worker",
+      maxConsoleEntries: 1,
+      onConsole: (_level, args) => captured.push(args),
+      policy: "tenant-script",
+    });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`
+      console.log("first");
+      console.log("second");
+      1
+    `);
+
+    const { receipt } = await script.runWithReceipt(context);
+
+    expect(captured).toEqual([["first"]]);
+    expect(receipt.console.entryLimitExceeded).toBe(true);
+    await isolate.dispose();
+  });
 });
