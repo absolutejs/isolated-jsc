@@ -73,6 +73,7 @@ export type {
   IsolatedRunnerPrecompileOptions,
   IsolatedRunnerRunOptions,
   IsolatedRunnerRunWithMetricsOptions,
+  IsolatedRunnerStats,
   RunIsolatedOptions,
   RunIsolatedWithMetricsOptions,
 } from "./run";

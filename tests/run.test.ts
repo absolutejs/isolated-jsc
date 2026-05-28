@@ -255,6 +255,43 @@ describe("createIsolatedRunner", () => {
     }
   });
 
+  test("reports runner pool and callable cache stats", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    try {
+      expect(runner.stats()).toEqual({
+        callableCacheSize: 0,
+        callablesByKey: {},
+        poolSize: 0,
+      });
+
+      await runner.precompile("double", "(n) => n * 2", { key: "tenant-a" });
+      await runner.precompile("triple", "(n) => n * 3", { key: "tenant-a" });
+      await runner.precompile("double", "(n) => n * 2", { key: "tenant-b" });
+
+      expect(runner.stats()).toEqual({
+        callableCacheSize: 3,
+        callablesByKey: {
+          "tenant-a": 2,
+          "tenant-b": 1,
+        },
+        poolSize: 2,
+      });
+
+      await runner.dispose();
+
+      expect(runner.stats()).toEqual({
+        callableCacheSize: 0,
+        callablesByKey: {},
+        poolSize: 0,
+      });
+    } finally {
+      await runner.dispose();
+    }
+  });
+
   test("precompile uses key-specific callable caches", async () => {
     const runner = createIsolatedRunner({
       backend: "worker",

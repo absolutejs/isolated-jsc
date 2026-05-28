@@ -109,6 +109,21 @@ export type IsolatedRunnerPrecompileOptions = {
   globals?: Record<string, unknown>;
 };
 
+export type IsolatedRunnerStats = {
+  /**
+   * Number of pooled isolate keys currently retained.
+   */
+  poolSize: number;
+  /**
+   * Number of cached compiled callables across all keys.
+   */
+  callableCacheSize: number;
+  /**
+   * Cached callable count by pool key.
+   */
+  callablesByKey: Record<string, number>;
+};
+
 export type IsolatedRunner = {
   run: {
     <T = unknown>(
@@ -139,6 +154,7 @@ export type IsolatedRunner = {
     source: string,
     options?: IsolatedRunnerPrecompileOptions,
   ) => Promise<void>;
+  stats: () => IsolatedRunnerStats;
   size: () => number;
   dispose: () => Promise<void>;
 };
@@ -147,6 +163,8 @@ type CallableSlot = {
   callable: Callable;
   context: Context;
   isolate: Isolate;
+  key: string;
+  name: string;
   source: string;
 };
 
@@ -249,10 +267,22 @@ export const createIsolatedRunner = (
       const context = await isolate.createContext(contextOptions);
       await installGlobals(context, globals);
       const callable = await context.compileCallable(source);
-      slot = { callable, context, isolate, source };
+      slot = { callable, context, isolate, key, name, source };
       callables.set(cacheKey, slot);
     }
     return slot;
+  };
+
+  const stats = (): IsolatedRunnerStats => {
+    const callablesByKey: Record<string, number> = {};
+    for (const slot of callables.values()) {
+      callablesByKey[slot.key] = (callablesByKey[slot.key] ?? 0) + 1;
+    }
+    return {
+      callableCacheSize: callables.size,
+      callablesByKey,
+      poolSize: pool.size(),
+    };
   };
 
   const run = async <T = unknown>(
@@ -361,6 +391,7 @@ export const createIsolatedRunner = (
     run: run as IsolatedRunner["run"],
     call: call as IsolatedRunner["call"],
     precompile,
+    stats,
     size: () => pool.size(),
     async dispose() {
       const slots = [...callables.values()];

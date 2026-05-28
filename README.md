@@ -66,7 +66,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 - **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
 - **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
-- **Reusable runners.** `createIsolatedRunner({ policy, globals, pool })` reuses isolates by key for hot tenant/session/conversation paths. Use `runner.run()` for fresh-context source execution, `runner.precompile()` to warm callables, or `runner.call()` to compile once per key/name and call repeatedly.
+- **Reusable runners.** `createIsolatedRunner({ policy, globals, pool })` reuses isolates by key for hot tenant/session/conversation paths. Use `runner.run()` for fresh-context source execution, `runner.precompile()` to warm callables, `runner.call()` to compile once per key/name and call repeatedly, and `runner.stats()` to inspect pool/cache size.
 
 ### Bun sandboxing decision guide
 
@@ -244,6 +244,7 @@ const callableResult = await runner.call<number>(
   { key: "tenant_123" },
 );
 // callableResult === 42
+// runner.stats() === { poolSize: 1, callableCacheSize: 1, callablesByKey: { tenant_123: 1 } }
 
 await runner.dispose();
 await isolate.dispose();
