@@ -260,10 +260,12 @@ export type Context = {
    * values are excluded. Pair with {@link CreateContextOptions.snapshot}
    * to derive a new context from this one's accumulated state.
    *
-   * Note: this is NOT a JSC heap snapshot (the JSC API doesn't expose that
-   * from outside the VM in a Worker model). It's an "extract the data and
-   * re-derive a new context from it" operation. The {@link
-   * CreateContextOptions.seed} carries the code half.
+   * Note: this is NOT a JSC heap snapshot. JavaScriptCore's public C API does
+   * not expose a stable serializer for a whole JSGlobalContextRef,
+   * JSContextGroupRef, call stack, closure graph, pending promise state, or
+   * JIT/profile state. This is an "extract the data and re-derive a new
+   * context from it" operation. The {@link CreateContextOptions.seed} carries
+   * the code half.
    */
   snapshot: () => Promise<Record<string, unknown>>;
   /** Dispose just this context (the isolate stays alive). */

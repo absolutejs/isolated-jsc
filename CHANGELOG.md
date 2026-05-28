@@ -2,6 +2,16 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.17 - 2026-05-28
+
+### Added
+
+- Added `SNAPSHOT_RESEARCH.md`, documenting why JavaScriptCore's public C API supports data checkpoints but not a V8-style heap pause/resume snapshot.
+
+### Changed
+
+- Tightened README and type docs to frame `Context.snapshot()` as a data checkpoint, not a JSC heap image.
+
 ## 0.8.16 - 2026-05-28
 
 ### Added
