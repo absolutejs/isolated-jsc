@@ -32,6 +32,12 @@ export {
   compileTypeScriptCallable,
   transpileTypeScript,
 } from "./typescript";
+export { resolveIsolatePolicy } from "./policy";
+export type {
+  IsolatePolicyName,
+  ResolvedIsolatePolicy,
+  ResolveIsolatePolicyOverrides,
+} from "./policy";
 export type {
   TranspileTypeScriptOptions,
   TypeScriptLoader,
