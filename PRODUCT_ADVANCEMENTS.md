@@ -250,7 +250,7 @@ Why now:
 ### P2: Output boundaries
 
 1. Add console entry/byte limits.
-2. Add result byte limits.
+2. Add result byte limits. **Done in 0.8.3.**
 3. Add truncation metadata to receipts.
 
 Why now:

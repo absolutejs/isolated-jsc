@@ -7,7 +7,12 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { CompileError, createIsolate, Reference } from "../src";
+import {
+  CompileError,
+  createIsolate,
+  Reference,
+  ResultSizeError,
+} from "../src";
 import type { Isolate } from "../src";
 
 let isolate: Isolate | undefined;
@@ -184,5 +189,19 @@ describe("Context.compileCallable", () => {
       tenant: "tenant-a",
     });
     expect(receipt.metrics?.backend).toBe("worker");
+  });
+
+  test("maxResultBytes rejects oversized callable results", async () => {
+    isolate = await createIsolate();
+    const ctx = await isolate.createContext();
+    const fn = await ctx.compileCallable("(n) => 'x'.repeat(n)");
+
+    const err = (await rejection(
+      fn.call([64], { maxResultBytes: 16 }),
+    )) as ResultSizeError;
+
+    expect(err).toBeInstanceOf(ResultSizeError);
+    expect(err.maxResultBytes).toBe(16);
+    expect(err.observedBytes).toBeGreaterThan(16);
   });
 });

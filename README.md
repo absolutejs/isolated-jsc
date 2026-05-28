@@ -64,6 +64,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 - **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with execution id, backend, policy, resource settings, timing, output size, and capability-call summaries.
+- **Result size limits.** Pass `maxResultBytes` in run options to reject oversized successful outputs with `ResultSizeError` before application code accepts them.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 - **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
 - **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
@@ -241,6 +242,7 @@ const receipted = await runIsolated<number>("input.n + 1", {
   globals: { input: { n: 41 } },
   run: {
     executionId: "exec_123",
+    maxResultBytes: 16_384,
     purpose: "ai-tool-call",
     tenant: "tenant_123",
   },
@@ -286,6 +288,7 @@ await isolate.dispose();
 
 - `TimeoutError` — wall-clock budget elapsed.
 - `MemoryLimitError` — heap exceeded the configured cap.
+- `ResultSizeError` — successful output exceeded `maxResultBytes`.
 - `IsolateDisposedError` — operation on a disposed isolate.
 - `CompileError` — syntax error in script source.
 

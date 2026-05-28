@@ -270,6 +270,12 @@ export type RunOptions = {
    */
   timeout?: number;
   /**
+   * Maximum JSON-encoded result size in bytes. When set, successful script or
+   * callable results larger than this reject with {@link ResultSizeError}
+   * instead of being returned to host application code.
+   */
+  maxResultBytes?: number;
+  /**
    * Whether to release the script after this run. `true` is a hint to the
    * GC; the script is also released when the isolate is disposed.
    */
@@ -494,6 +500,21 @@ export class MemoryLimitError extends Error {
     );
     this.name = "MemoryLimitError";
     this.memoryLimitMb = memoryLimitMb;
+    this.observedBytes = observedBytes;
+  }
+}
+
+/** A result exceeded the caller's configured output byte limit. */
+export class ResultSizeError extends Error {
+  readonly code = "RESULT_SIZE_LIMIT";
+  readonly maxResultBytes: number;
+  readonly observedBytes: number;
+  constructor(maxResultBytes: number, observedBytes: number) {
+    super(
+      `Result size (${observedBytes} bytes) exceeded the ${maxResultBytes} byte limit`,
+    );
+    this.name = "ResultSizeError";
+    this.maxResultBytes = maxResultBytes;
     this.observedBytes = observedBytes;
   }
 }

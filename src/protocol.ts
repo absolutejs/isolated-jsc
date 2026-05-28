@@ -72,6 +72,7 @@ export type HostRequest =
       op: "run";
       contextId: number;
       scriptId: number;
+      maxResultBytes?: number;
       withMetrics?: boolean;
     }
   | {
@@ -79,6 +80,7 @@ export type HostRequest =
       op: "call";
       callableId: number;
       args: WireValue[];
+      maxResultBytes?: number;
       withMetrics?: boolean;
     }
   | { id: number; op: "disposeContext"; contextId: number }

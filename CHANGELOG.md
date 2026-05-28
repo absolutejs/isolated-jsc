@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.3 - 2026-05-28
+
+### Added
+
+- Added `maxResultBytes` run option for scripts, callables, one-shot execution, and reusable runners. Oversized successful outputs now reject with `ResultSizeError` before application code accepts them.
+
 ## 0.8.2 - 2026-05-28
 
 ### Added

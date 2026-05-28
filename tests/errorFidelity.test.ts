@@ -13,7 +13,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { createIsolate, type Isolate } from "../src";
+import { createIsolate, ResultSizeError, type Isolate } from "../src";
 
 const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
@@ -223,5 +223,24 @@ describe("script.runWithMetrics", () => {
     expect(err.message).toBe("boom");
     expect(err.receipt?.status).toBe("error");
     expect(err.receipt?.error?.name).toBe("Error");
+  });
+
+  test("maxResultBytes rejects oversized script results", async () => {
+    isolate = await createIsolate();
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`"x".repeat(128)`);
+
+    const err = (await rejection(
+      script.runWithReceipt(context, {
+        executionId: "oversized_result",
+        maxResultBytes: 16,
+      }),
+    )) as ResultSizeError & { receipt?: { error?: { code?: string } } };
+
+    expect(err).toBeInstanceOf(ResultSizeError);
+    expect(err.code).toBe("RESULT_SIZE_LIMIT");
+    expect(err.maxResultBytes).toBe(16);
+    expect(err.observedBytes).toBeGreaterThan(16);
+    expect(err.receipt?.error?.code).toBe("RESULT_SIZE_LIMIT");
   });
 });

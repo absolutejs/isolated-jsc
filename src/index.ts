@@ -52,6 +52,7 @@ export {
   IsolateDisposedError,
   MemoryLimitError,
   Reference,
+  ResultSizeError,
   TimeoutError,
 } from "./types";
 export type {

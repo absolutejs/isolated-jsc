@@ -134,6 +134,35 @@ const wrapError = (error: unknown, depth = 0): WireError => {
   return wire;
 };
 
+const jsonByteSize = (value: unknown): number | undefined => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return undefined;
+  }
+};
+
+const enforceResultSize = (
+  value: unknown,
+  maxResultBytes: number | undefined,
+): void => {
+  if (maxResultBytes === undefined) return;
+  const observedBytes = jsonByteSize(value);
+  if (observedBytes === undefined || observedBytes <= maxResultBytes) return;
+  const error = new Error(
+    `Result size (${observedBytes} bytes) exceeded the ${maxResultBytes} byte limit`,
+  ) as Error & {
+    code: string;
+    maxResultBytes: number;
+    observedBytes: number;
+  };
+  error.name = "ResultSizeError";
+  error.code = "RESULT_SIZE_LIMIT";
+  error.maxResultBytes = maxResultBytes;
+  error.observedBytes = observedBytes;
+  throw error;
+};
+
 // ─── Hardening (T2.1) ───────────────────────────────────────────────────────
 
 /**
@@ -511,6 +540,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           const wantMetrics = request.withMetrics === true;
           const startedAt = wantMetrics ? Date.now() : 0;
           const result = await script(sandbox);
+          enforceResultSize(result, request.maxResultBytes);
           const reply: WorkerReply = {
             id: request.id,
             ok: true,
@@ -532,6 +562,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           const startedAt = wantMetrics ? Date.now() : 0;
           const argValues = request.args.map((a) => rehydrate(a));
           const result = await callable.fn(...argValues);
+          enforceResultSize(result, request.maxResultBytes);
           const reply: WorkerReply = {
             id: request.id,
             ok: true,

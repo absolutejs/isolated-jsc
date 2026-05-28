@@ -56,6 +56,7 @@ import {
   createErrorReceipt,
   createSuccessReceipt,
 } from "../receipt";
+import { enforceResultSize } from "../resultLimits";
 
 // Same HARDEN_TARGETS the Worker backend uses (T2.1).
 const HARDEN_TARGETS = [
@@ -747,6 +748,7 @@ const makeFfiCallable = (
     context,
     async call(args: unknown[], options: RunOptions = {}): Promise<unknown> {
       const { value } = await runRaw(args, options);
+      enforceResultSize(value, options.maxResultBytes);
       return value;
     },
     async callWithMetrics(
@@ -754,6 +756,7 @@ const makeFfiCallable = (
       options: RunOptions = {},
     ): Promise<RunWithMetricsResult> {
       const { value, cpuMs, heapBytes } = await runRaw(args, options);
+      enforceResultSize(value, options.maxResultBytes);
       return {
         metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
         result: value,
@@ -1171,6 +1174,7 @@ const makeFfiScript = (
 
     async run(context: Context, options: RunOptions = {}): Promise<unknown> {
       const { value } = await runRaw(context, options);
+      enforceResultSize(value, options.maxResultBytes);
       if (options.release === true) await script.dispose();
       return value;
     },
@@ -1180,6 +1184,7 @@ const makeFfiScript = (
       options: RunOptions = {},
     ): Promise<RunWithMetricsResult> {
       const { value, cpuMs, heapBytes } = await runRaw(context, options);
+      enforceResultSize(value, options.maxResultBytes);
       if (options.release === true) await script.dispose();
       return {
         result: value,

@@ -6,14 +6,7 @@ import type {
   RunMetrics,
   RunReceiptOptions,
 } from "./types";
-
-const estimateJsonBytes = (value: unknown): number | undefined => {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-  } catch {
-    return undefined;
-  }
-};
+import { estimateResultBytes } from "./resultLimits";
 
 const receiptError = (error: unknown): ExecutionReceiptError => {
   if (error instanceof Error) {
@@ -65,7 +58,7 @@ export const createSuccessReceipt = (
     executionId: base.options.executionId ?? randomExecutionId(),
     memoryLimitMb: base.isolate.options.memoryLimit,
     metrics,
-    outputBytes: estimateJsonBytes(result),
+    outputBytes: estimateResultBytes(result),
     outputTruncated: false,
     startedAt: base.startedAt.toISOString(),
     status: "success",

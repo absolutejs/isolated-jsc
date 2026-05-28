@@ -21,6 +21,7 @@ import {
   IsolateDisposedError,
   MemoryLimitError,
   Reference,
+  ResultSizeError,
   type RunReceiptOptions,
   type RunOptions,
   type RunWithMetricsResult,
@@ -162,6 +163,18 @@ const rebuildError = (wire: {
   cause?: { name: string; message: string; stack?: string; cause?: unknown };
   props?: Record<string, unknown>;
 }): Error => {
+  if (
+    wire.name === "ResultSizeError" &&
+    typeof wire.props?.maxResultBytes === "number" &&
+    typeof wire.props?.observedBytes === "number"
+  ) {
+    const error = new ResultSizeError(
+      wire.props.maxResultBytes,
+      wire.props.observedBytes,
+    );
+    if (wire.stack !== undefined) error.stack = wire.stack;
+    return error;
+  }
   const error = new Error(wire.message);
   error.name = wire.name;
   if (wire.stack !== undefined) error.stack = wire.stack;
@@ -529,6 +542,7 @@ const makeScript = (
           id,
           op: "run",
           contextId: contextIdOf(context),
+          maxResultBytes: options.maxResultBytes,
           scriptId,
         }),
         timeoutMs,
@@ -549,6 +563,7 @@ const makeScript = (
           id,
           op: "run",
           contextId: contextIdOf(context),
+          maxResultBytes: options.maxResultBytes,
           scriptId,
           withMetrics: true,
         }),
@@ -615,6 +630,7 @@ const makeCallable = (
           op: "call",
           callableId,
           args: args.map((a) => toWire(state, a)),
+          maxResultBytes: options.maxResultBytes,
         }),
         timeoutMs,
       );
@@ -637,6 +653,7 @@ const makeCallable = (
           op: "call",
           callableId,
           args: args.map((a) => toWire(state, a)),
+          maxResultBytes: options.maxResultBytes,
           withMetrics: true,
         }),
         timeoutMs,
