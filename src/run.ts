@@ -94,6 +94,21 @@ export type IsolatedRunnerCallWithMetricsOptions = IsolatedRunnerCallOptions & {
   withMetrics: true;
 };
 
+export type IsolatedRunnerPrecompileOptions = {
+  /**
+   * Pool key to warm. Defaults to `"default"`.
+   */
+  key?: string;
+  /**
+   * Context options used when compiling the callable for this key/name.
+   */
+  context?: CreateContextOptions;
+  /**
+   * Globals installed when compiling the callable for this key/name.
+   */
+  globals?: Record<string, unknown>;
+};
+
 export type IsolatedRunner = {
   run: {
     <T = unknown>(
@@ -119,6 +134,11 @@ export type IsolatedRunner = {
       options?: IsolatedRunnerCallOptions,
     ): Promise<T>;
   };
+  precompile: (
+    name: string,
+    source: string,
+    options?: IsolatedRunnerPrecompileOptions,
+  ) => Promise<void>;
   size: () => number;
   dispose: () => Promise<void>;
 };
@@ -209,6 +229,32 @@ export const createIsolatedRunner = (
     }
   };
 
+  const compileCallableSlot = async (
+    key: string,
+    name: string,
+    source: string,
+    isolate: Isolate,
+    contextOptions: CreateContextOptions | undefined,
+    globals: Record<string, unknown> | undefined,
+  ): Promise<CallableSlot> => {
+    const cacheKey = `${key}\0${name}`;
+    let slot = callables.get(cacheKey);
+    if (
+      slot === undefined ||
+      slot.isolate !== isolate ||
+      isolate.isDisposed ||
+      slot.source !== source
+    ) {
+      await disposeSlot(slot);
+      const context = await isolate.createContext(contextOptions);
+      await installGlobals(context, globals);
+      const callable = await context.compileCallable(source);
+      slot = { callable, context, isolate, source };
+      callables.set(cacheKey, slot);
+    }
+    return slot;
+  };
+
   const run = async <T = unknown>(
     source: string,
     runOptions: IsolatedRunnerRunOptions = {},
@@ -261,20 +307,14 @@ export const createIsolatedRunner = (
         : { ...(defaultRun ?? {}), ...(callOptions.run ?? {}) };
 
     return pool.run(key, async (isolate) => {
-      let slot = callables.get(cacheKey);
-      if (
-        slot === undefined ||
-        slot.isolate !== isolate ||
-        isolate.isDisposed ||
-        slot.source !== source
-      ) {
-        await disposeSlot(slot);
-        const context = await isolate.createContext(contextOptions);
-        await installGlobals(context, globals);
-        const callable = await context.compileCallable(source);
-        slot = { callable, context, isolate, source };
-        callables.set(cacheKey, slot);
-      }
+      const slot = await compileCallableSlot(
+        key,
+        name,
+        source,
+        isolate,
+        contextOptions,
+        globals,
+      );
 
       try {
         if (callOptions.withMetrics === true) {
@@ -293,9 +333,34 @@ export const createIsolatedRunner = (
     });
   };
 
+  const precompile = async (
+    name: string,
+    source: string,
+    precompileOptions: IsolatedRunnerPrecompileOptions = {},
+  ): Promise<void> => {
+    const key = precompileOptions.key ?? "default";
+    const contextOptions = precompileOptions.context ?? defaultContext;
+    const globals =
+      defaultGlobals === undefined && precompileOptions.globals === undefined
+        ? undefined
+        : { ...(defaultGlobals ?? {}), ...(precompileOptions.globals ?? {}) };
+
+    await pool.run(key, async (isolate) => {
+      await compileCallableSlot(
+        key,
+        name,
+        source,
+        isolate,
+        contextOptions,
+        globals,
+      );
+    });
+  };
+
   return {
     run: run as IsolatedRunner["run"],
     call: call as IsolatedRunner["call"],
+    precompile,
     size: () => pool.size(),
     async dispose() {
       const slots = [...callables.values()];

@@ -231,4 +231,67 @@ describe("createIsolatedRunner", () => {
       await runner.dispose();
     }
   });
+
+  test("precompiles callable cache before the first call", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      globals: { offset: 10 },
+      pool: { idleMs: 0 },
+    });
+    try {
+      await runner.precompile("offsetAdd", "(n) => n + offset");
+      expect(runner.size()).toBe(1);
+
+      const result = await runner.call<number>(
+        "offsetAdd",
+        "(n) => n + offset",
+        [32],
+      );
+
+      expect(result).toBe(42);
+      expect(runner.size()).toBe(1);
+    } finally {
+      await runner.dispose();
+    }
+  });
+
+  test("precompile uses key-specific callable caches", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    try {
+      await runner.precompile("double", "(n) => n * 2", { key: "tenant-a" });
+      await runner.precompile("double", "(n) => n * 2", { key: "tenant-b" });
+
+      expect(runner.size()).toBe(2);
+      expect(
+        await runner.call<number>("double", "(n) => n * 2", [21], {
+          key: "tenant-a",
+        }),
+      ).toBe(42);
+      expect(
+        await runner.call<number>("double", "(n) => n * 2", [12], {
+          key: "tenant-b",
+        }),
+      ).toBe(24);
+    } finally {
+      await runner.dispose();
+    }
+  });
+
+  test("precompile rejects invalid callable source", async () => {
+    const runner = createIsolatedRunner({
+      backend: "worker",
+      pool: { idleMs: 0 },
+    });
+    try {
+      const err = await rejection(runner.precompile("bad", "42"));
+
+      expect(err).toBeInstanceOf(Error);
+      expect(runner.size()).toBe(1);
+    } finally {
+      await runner.dispose();
+    }
+  });
 });

@@ -70,6 +70,7 @@ export type {
   IsolatedRunner,
   IsolatedRunnerCallOptions,
   IsolatedRunnerCallWithMetricsOptions,
+  IsolatedRunnerPrecompileOptions,
   IsolatedRunnerRunOptions,
   IsolatedRunnerRunWithMetricsOptions,
   RunIsolatedOptions,
