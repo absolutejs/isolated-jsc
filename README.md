@@ -66,6 +66,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 - **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
 - **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
+- **Reusable runners.** `createIsolatedRunner({ policy, globals, pool })` reuses isolates by key for hot tenant/session/conversation paths while creating a fresh context per run.
 
 ### Bun sandboxing decision guide
 
@@ -116,6 +117,7 @@ import {
   defineCapabilityTool,
   compileTypeScriptCallable,
   createIsolate,
+  createIsolatedRunner,
   resolveIsolatePolicy,
   runIsolated,
   Reference,
@@ -216,6 +218,20 @@ const measured = await runIsolated<number>("input.n + 1", {
 });
 // measured.result === 42; measured.metrics.backend === "ffi" | "worker"
 
+// Reusable runner for repeated request/response paths.
+const runner = createIsolatedRunner({
+  policy: "tenant-script",
+  globals: { tools: broker.reference },
+  pool: { maxSize: 64, idleMs: 60_000, recycleAfter: 1_000 },
+});
+
+const tenantResult = await runner.run<number>("input.n * 2", {
+  key: "tenant_123",
+  globals: { input: { n: 21 } },
+});
+// tenantResult === 42
+
+await runner.dispose();
 await isolate.dispose();
 ```
 
