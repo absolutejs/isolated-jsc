@@ -41,7 +41,7 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.8.13)
+## What ships today (v0.8.14)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -172,8 +172,19 @@ await handler.call([" alex "]); // "ALEX"
 
 type TenantContext = { id: string };
 type LookupOrderInput = { id: string };
-type Order = { id: string; status: string };
+type Order = {
+  cardLast4: string;
+  customerEmail: string;
+  id: string;
+  status: string;
+};
 const audit = createCapabilityAuditBuffer<TenantContext>({ maxEvents: 100 });
+const redactEmail = (email: string) => {
+  const [name, domain] = email.split("@");
+  return domain === undefined
+    ? "[email redacted]"
+    : `${name.slice(0, 2)}***@${domain}`;
+};
 
 const broker = createCapabilityBroker(
   {
@@ -191,7 +202,12 @@ const broker = createCapabilityBroker(
       redactAuditOutput: (output) => {
         if (output === null) return null;
         const order = output as Order;
-        return { id: order.id, status: order.status };
+        return {
+          cardLast4: order.cardLast4,
+          customerEmail: redactEmail(order.customerEmail),
+          id: order.id,
+          status: order.status,
+        };
       },
       timeoutMs: 250,
       validateInput: (input) => {
@@ -206,8 +222,34 @@ const broker = createCapabilityBroker(
       },
       handler: async ({ id }, tenant) => await lookupOrder(tenant.id, id),
     }),
+    chargeCard: defineCapabilityTool<
+      { cardToken: string; orderId: string },
+      { authorizationId: string; processorTraceId: string },
+      TenantContext
+    >({
+      description: "Charge an opaque card token for one tenant order",
+      input: "ChargeInput",
+      output: "ChargeResult",
+      risk: "write",
+      redactAuditInput: (input) => ({
+        cardToken: "[token redacted]",
+        orderId: (input as { orderId?: unknown }).orderId,
+      }),
+      redactAuditOutput: (output) => ({
+        authorizationId: (output as { authorizationId?: unknown })
+          .authorizationId,
+        processorTraceId: "[trace redacted]",
+      }),
+      validateInput: (input) => input as { cardToken: string; orderId: string },
+      handler: async (input, tenant) => await chargeCard(tenant.id, input),
+    }),
   },
-  { context: { id: "tenant_123" }, onAudit: audit.onAudit },
+  {
+    context: { id: "tenant_123" },
+    onAudit: audit.onAudit,
+    redactAuditInput: () => "[input redacted by default]",
+    redactAuditOutput: () => "[output redacted by default]",
+  },
 );
 
 // Host-side direct calls are typed from the tool map.
@@ -230,6 +272,12 @@ broker.manifest();
 //   redactsInput: true,
 //   redactsOutput: true
 // }]
+
+// Audit events and receipts retain the operational proof, not raw secrets:
+//   order ids stay visible
+//   emails become ad***@example.com
+//   card tokens become [token redacted]
+//   processor trace ids become [trace redacted]
 
 // Sandbox calls still use an untrusted-code-safe Reference.
 await context.setGlobal("tools", broker.reference);

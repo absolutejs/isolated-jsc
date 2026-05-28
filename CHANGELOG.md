@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.14 - 2026-05-28
+
+### Changed
+
+- Expanded broker redaction examples in the README and agent-tool demo to show default redactors, per-tool overrides, masked emails, opaque token redaction, and processor trace redaction.
+
 ## 0.8.13 - 2026-05-28
 
 ### Added
