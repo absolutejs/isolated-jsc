@@ -234,6 +234,14 @@ bun test
 
 The test suite covers compile/run, contexts, `Reference` call-through, `ExternalCopy`, timeout, memory caps, dispose idempotency, pool behavior, TypeScript helpers, capability brokers, FFI behavior, host-reachability documentation, and hostile-tenant stress cases.
 
+## Release checks
+
+```bash
+bun run check:release
+```
+
+The release check runs the package typecheck, build, unit tests, agent-tool example, and the browser smoke in the sibling `../examples/isolated-jsc` app. Keep the `absolutejs/examples` repo checked out next to this package repo when cutting releases so the demo path is covered before publish.
+
 ## Related
 
 - [`@absolutejs/sync`](https://github.com/absolutejs/sync) — reactive sync engine. Will eventually use this library to sandbox per-tenant mutation handlers in the hosted PaaS.

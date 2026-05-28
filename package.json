@@ -35,7 +35,10 @@
     "test": "ISOLATED_JSC_BACKEND=worker bun test tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"./**/*.{ts,json,md}\"",
-    "release": "bun run format && bun run build && bun publish",
+    "check:package": "bun run typecheck && bun run build && bun run test && bun run example:agent-tool",
+    "check:examples": "cd ../examples/isolated-jsc && bun run typecheck && PORT=3564 bun run test",
+    "check:release": "bun run check:package && bun run check:examples",
+    "release": "bun run format && bun run check:release && bun publish",
     "bench:proof": "bun bench/proof.ts",
     "example:agent-tool": "bun run build && bun examples/agent-tool.ts"
   },
