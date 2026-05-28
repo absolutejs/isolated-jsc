@@ -343,6 +343,8 @@ export type ExecutionReceiptConsole = {
 export type ExecutionReceipt = {
   backend: IsolateBackend;
   capabilityCalls: ExecutionReceiptCapabilityEvent[];
+  capabilityCallsDropped?: number;
+  capabilityCallsTruncated?: boolean;
   console: ExecutionReceiptConsole;
   durationMs: number;
   endedAt: string;
@@ -367,10 +369,15 @@ export type RunReceiptOptions = RunOptions & {
    */
   executionId?: string;
   /**
-   * Capability audit events captured by a broker during this execution. Pass
-   * the same array you append to from `createCapabilityBroker({ onAudit })`.
+   * Capability audit events captured by a broker during this execution.
+   * Prefer `createCapabilityAuditBuffer({ maxEvents })` and spread its
+   * `receiptOptions()` here so receipts stay bounded.
    */
   capabilityEvents?: readonly ExecutionReceiptCapabilityEvent[];
+  /** Number of capability audit events dropped before receipt creation. */
+  capabilityEventsDropped?: number;
+  /** Whether capability audit events were truncated before receipt creation. */
+  capabilityEventsTruncated?: boolean;
   /**
    * User/application labels copied into the receipt for review workflows.
    */

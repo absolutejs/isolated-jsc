@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   CapabilityError,
+  createCapabilityAuditBuffer,
   createCapabilityBroker,
   createIsolate,
   defineCapabilityTool,
@@ -31,6 +32,62 @@ const asObject = (value: unknown): Record<string, unknown> => {
 };
 
 describe("createCapabilityBroker", () => {
+  test("bounds retained audit events for receipt-safe buffers", () => {
+    const buffer = createCapabilityAuditBuffer<{ tenantId: string }>({
+      maxEvents: 2,
+    });
+    const event = (
+      tool: string,
+      status: CapabilityAuditEvent<{ tenantId: string }>["status"],
+    ): CapabilityAuditEvent<{ tenantId: string }> => ({
+      context: { tenantId: "tenant-a" },
+      input: undefined,
+      status,
+      tool,
+    });
+
+    buffer.onAudit(event("one", "start"));
+    buffer.onAudit(event("one", "success"));
+    buffer.onAudit(event("two", "start"));
+
+    expect(buffer.events.map((item) => item.status)).toEqual([
+      "start",
+      "success",
+    ]);
+    expect(buffer.dropped).toBe(1);
+    expect(buffer.truncated).toBe(true);
+    expect(buffer.snapshot()).toMatchObject({
+      dropped: 1,
+      truncated: true,
+    });
+    expect(buffer.receiptOptions()).toMatchObject({
+      capabilityEventsDropped: 1,
+      capabilityEventsTruncated: true,
+    });
+
+    buffer.clear();
+    expect(buffer.events).toHaveLength(0);
+    expect(buffer.dropped).toBe(0);
+    expect(buffer.truncated).toBe(false);
+  });
+
+  test("allows zero retained audit events", () => {
+    const buffer = createCapabilityAuditBuffer({ maxEvents: 0 });
+    buffer.onAudit({
+      context: undefined,
+      input: "secret",
+      status: "start",
+      tool: "lookup",
+    });
+    expect(buffer.events).toHaveLength(0);
+    expect(buffer.dropped).toBe(1);
+    expect(buffer.receiptOptions()).toMatchObject({
+      capabilityEvents: [],
+      capabilityEventsDropped: 1,
+      capabilityEventsTruncated: true,
+    });
+  });
+
   test("dispatches validated tools through a Reference", async () => {
     isolate = await createIsolate();
     const context = await isolate.createContext();

@@ -76,6 +76,12 @@ export const createSuccessReceipt = (
   if (base.isolate.policy?.name !== undefined) {
     receipt.policy = base.isolate.policy.name;
   }
+  if (base.options.capabilityEventsDropped !== undefined) {
+    receipt.capabilityCallsDropped = base.options.capabilityEventsDropped;
+  }
+  if (base.options.capabilityEventsTruncated !== undefined) {
+    receipt.capabilityCallsTruncated = base.options.capabilityEventsTruncated;
+  }
   if (base.options.purpose !== undefined)
     receipt.purpose = base.options.purpose;
   if (base.options.tenant !== undefined) receipt.tenant = base.options.tenant;
@@ -107,6 +113,12 @@ export const createErrorReceipt = (
   };
   if (base.isolate.policy?.name !== undefined) {
     receipt.policy = base.isolate.policy.name;
+  }
+  if (base.options.capabilityEventsDropped !== undefined) {
+    receipt.capabilityCallsDropped = base.options.capabilityEventsDropped;
+  }
+  if (base.options.capabilityEventsTruncated !== undefined) {
+    receipt.capabilityCallsTruncated = base.options.capabilityEventsTruncated;
   }
   if (base.options.purpose !== undefined)
     receipt.purpose = base.options.purpose;

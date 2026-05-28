@@ -41,7 +41,7 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.8.6)
+## What ships today (v0.8.7)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -63,8 +63,9 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Context seed + snapshot (T2.3, new in 0.1).** `createContext({ seed, snapshot })` runs setup code (assign onto `this`) and restores cloneable data state from a previous `context.snapshot()`. Pair them to fork a fresh context from a prior one's accumulated state (the AI-agent-across-turns pattern).
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
-- **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with execution id, backend, policy, resource settings, timing, output size, and capability-call summaries.
+- **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with execution id, backend, policy, resource settings, timing, output size, bounded capability-call summaries, and dropped-event counts.
 - **Capability audit redaction.** Brokers support default `redactAuditInput` / `redactAuditOutput` hooks, and each tool can override them before audit events hit logs or receipts.
+- **Bounded capability audit buffers.** `createCapabilityAuditBuffer({ maxEvents })` gives apps a receipt-ready `onAudit` sink with explicit truncation metadata, avoiding unbounded in-memory audit arrays when sandbox code spams host tools.
 - **Result size limits.** Pass `maxResultBytes` in run options to reject oversized successful outputs with `ResultSizeError` before application code accepts them.
 - **Console output limits.** Pass `maxConsoleEntries` / `maxConsoleBytes` when creating an isolate to drop excess captured console events and surface overflow flags in receipts.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
@@ -117,6 +118,7 @@ Rule of thumb: use `backend: "ffi"` for hostile-code production paths, `backend:
 
 ```ts
 import {
+  createCapabilityAuditBuffer,
   createCapabilityBroker,
   defineCapabilityTool,
   compileTypeScriptCallable,
@@ -170,6 +172,7 @@ await handler.call([" alex "]); // "ALEX"
 type TenantContext = { id: string };
 type LookupOrderInput = { id: string };
 type Order = { id: string; status: string };
+const audit = createCapabilityAuditBuffer<TenantContext>({ maxEvents: 100 });
 
 const broker = createCapabilityBroker(
   {
@@ -202,7 +205,7 @@ const broker = createCapabilityBroker(
       handler: async ({ id }, tenant) => await lookupOrder(tenant.id, id),
     }),
   },
-  { context: { id: "tenant_123" } },
+  { context: { id: "tenant_123" }, onAudit: audit.onAudit },
 );
 
 // Host-side direct calls are typed from the tool map.
@@ -253,6 +256,7 @@ const receipted = await runIsolated<number>("input.n + 1", {
   policy: "tenant-script",
   globals: { input: { n: 41 } },
   run: {
+    ...audit.receiptOptions(),
     executionId: "exec_123",
     maxResultBytes: 16_384,
     purpose: "ai-tool-call",

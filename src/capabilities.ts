@@ -17,6 +17,34 @@ export type CapabilityAuditEvent<TContext = unknown> = {
   tool: string;
 };
 
+export type CapabilityAuditBufferOptions = {
+  /**
+   * Maximum audit events retained in memory. Extra events are dropped and
+   * reported through `dropped` / `truncated` and `receiptOptions()`.
+   */
+  maxEvents?: number;
+};
+
+export type CapabilityAuditBufferSnapshot<TContext = unknown> = {
+  dropped: number;
+  events: CapabilityAuditEvent<TContext>[];
+  truncated: boolean;
+};
+
+export type CapabilityAuditBuffer<TContext = unknown> = {
+  readonly dropped: number;
+  readonly events: readonly CapabilityAuditEvent<TContext>[];
+  readonly truncated: boolean;
+  clear: () => void;
+  onAudit: (event: CapabilityAuditEvent<TContext>) => void;
+  receiptOptions: () => {
+    capabilityEvents: readonly CapabilityAuditEvent<TContext>[];
+    capabilityEventsDropped: number;
+    capabilityEventsTruncated: boolean;
+  };
+  snapshot: () => CapabilityAuditBufferSnapshot<TContext>;
+};
+
 export type CapabilityValidator<T> = (value: unknown) => T;
 export type CapabilityAuditRedactor<TContext = unknown> = (
   value: unknown,
@@ -163,6 +191,51 @@ export class CapabilityError extends Error {
 
 const now = () => performance.now();
 const REDACTION_FAILED = "[audit redaction failed]";
+
+export const createCapabilityAuditBuffer = <TContext = unknown>(
+  options: CapabilityAuditBufferOptions = {},
+): CapabilityAuditBuffer<TContext> => {
+  const configuredMax = Math.floor(options.maxEvents ?? 100);
+  const maxEvents =
+    Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 0;
+  const events: CapabilityAuditEvent<TContext>[] = [];
+  let dropped = 0;
+
+  const snapshot = (): CapabilityAuditBufferSnapshot<TContext> => ({
+    dropped,
+    events: [...events],
+    truncated: dropped > 0,
+  });
+
+  return {
+    get dropped() {
+      return dropped;
+    },
+    get events() {
+      return events;
+    },
+    get truncated() {
+      return dropped > 0;
+    },
+    clear: () => {
+      events.length = 0;
+      dropped = 0;
+    },
+    onAudit: (event) => {
+      if (events.length >= maxEvents) {
+        dropped += 1;
+        return;
+      }
+      events.push(event);
+    },
+    receiptOptions: () => ({
+      capabilityEvents: events,
+      capabilityEventsDropped: dropped,
+      capabilityEventsTruncated: dropped > 0,
+    }),
+    snapshot,
+  };
+};
 
 const timeout = (tool: string, timeoutMs: number): Promise<never> =>
   new Promise((_, reject) => {

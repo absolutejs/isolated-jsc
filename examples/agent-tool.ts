@@ -1,9 +1,9 @@
 import {
   compileTypeScriptCallable,
+  createCapabilityAuditBuffer,
   createCapabilityBroker,
   createIsolate,
   defineCapabilityTool,
-  type CapabilityAuditEvent,
 } from "@absolutejs/isolated-jsc";
 
 type TenantContext = {
@@ -48,7 +48,7 @@ const requireOrderLookup = (input: unknown): OrderLookup => {
   return { id };
 };
 
-const audit: CapabilityAuditEvent<TenantContext>[] = [];
+const audit = createCapabilityAuditBuffer<TenantContext>({ maxEvents: 100 });
 
 const broker = createCapabilityBroker(
   {
@@ -92,7 +92,7 @@ const broker = createCapabilityBroker(
   {
     context: tenant,
     defaultTimeoutMs: 250,
-    onAudit: (event) => audit.push(event),
+    onAudit: audit.onAudit,
   },
 );
 
@@ -127,7 +127,7 @@ try {
 
   console.log(
     JSON.stringify(
-      { result, metrics, manifest: broker.manifest(), audit },
+      { result, metrics, manifest: broker.manifest(), audit: audit.snapshot() },
       null,
       2,
     ),

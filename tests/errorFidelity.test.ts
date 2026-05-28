@@ -13,7 +13,12 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { createIsolate, ResultSizeError, type Isolate } from "../src";
+import {
+  createCapabilityAuditBuffer,
+  createIsolate,
+  ResultSizeError,
+  type Isolate,
+} from "../src";
 
 const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
@@ -206,6 +211,37 @@ describe("script.runWithMetrics", () => {
     expect(receipt.outputBytes).toBeGreaterThan(0);
     expect(Date.parse(receipt.startedAt)).not.toBeNaN();
     expect(Date.parse(receipt.endedAt)).not.toBeNaN();
+  });
+
+  test("runWithReceipt reports bounded capability audit truncation", async () => {
+    isolate = await createIsolate();
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript("1");
+    const audit = createCapabilityAuditBuffer({ maxEvents: 1 });
+    audit.onAudit({
+      context: undefined,
+      input: undefined,
+      status: "start",
+      tool: "lookupOrder",
+    });
+    audit.onAudit({
+      context: undefined,
+      durationMs: 1,
+      input: undefined,
+      status: "success",
+      tool: "lookupOrder",
+    });
+
+    const { receipt } = await script.runWithReceipt(context, {
+      ...audit.receiptOptions(),
+      executionId: "exec_bounded_capability_audit",
+    });
+
+    expect(receipt.capabilityCalls).toEqual([
+      { status: "start", tool: "lookupOrder" },
+    ]);
+    expect(receipt.capabilityCallsDropped).toBe(1);
+    expect(receipt.capabilityCallsTruncated).toBe(true);
   });
 
   test("runWithReceipt attaches receipt to thrown errors", async () => {

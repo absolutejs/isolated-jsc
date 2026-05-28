@@ -10,10 +10,14 @@ export { createIsolatePool } from "./pool";
 export { createIsolatedRunner, runIsolated } from "./run";
 export {
   CapabilityError,
+  createCapabilityAuditBuffer,
   createCapabilityBroker,
   defineCapabilityTool,
 } from "./capabilities";
 export type {
+  CapabilityAuditBuffer,
+  CapabilityAuditBufferOptions,
+  CapabilityAuditBufferSnapshot,
   CapabilityAuditEvent,
   CapabilityAuditRedactor,
   CapabilityAuditStatus,

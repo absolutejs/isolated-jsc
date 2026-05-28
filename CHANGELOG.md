@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.7 - 2026-05-28
+
+### Added
+
+- Added `createCapabilityAuditBuffer({ maxEvents })` for bounded capability audit collection. Receipts now support optional `capabilityCallsDropped` and `capabilityCallsTruncated` metadata so apps can prove audit events were capped instead of retaining unbounded arrays.
+
 ## 0.8.6 - 2026-05-28
 
 ### Added
