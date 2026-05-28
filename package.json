@@ -61,6 +61,7 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
+    "BUN_POSITIONING.md",
     "BENCHMARKS.md",
     "MARKET_ANALYSIS.md",
     "MIGRATING_FROM_ISOLATED_VM.md",
