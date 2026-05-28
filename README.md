@@ -136,6 +136,7 @@ import {
   runIsolatedFile,
   Reference,
   ExternalCopy,
+  validateContextCheckpoint,
   type Isolate,
   type Context,
   type Script,
@@ -204,8 +205,11 @@ const checkpoint = await context.checkpoint({
   exclude: ["scratch"],
   maxBytes: 64 * 1024,
 });
+const persisted = JSON.stringify(checkpoint);
+const restoredCheckpoint = JSON.parse(persisted);
+validateContextCheckpoint(restoredCheckpoint);
 const resumed = await isolate.createContext({
-  checkpoint,
+  checkpoint: restoredCheckpoint,
   seed: "this.double = (n) => n * 2",
 });
 // checkpoint.schemaVersion === 1
@@ -460,9 +464,11 @@ The doctor prints Bun/platform details, FFI backend availability, JavaScriptCore
 
 ```bash
 bun run example:agent-tool
+bun run example:checkpoint
 ```
 
 The agent-tool example combines TypeScript callable compilation, a capability broker, tenant context, tool timeouts, audit events, and per-call metrics.
+The checkpoint example shows persisted checkpoint JSON, restore validation, and seed-based resume.
 
 ## Benchmarks
 

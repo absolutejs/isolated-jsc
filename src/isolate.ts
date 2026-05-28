@@ -45,6 +45,7 @@ import {
   type ConsoleLimitState,
 } from "./consoleLimits";
 import { applyIsolatePolicyOptions } from "./policy";
+import { validateContextCheckpoint } from "./checkpoint";
 import {
   attachReceipt,
   createErrorReceipt,
@@ -419,10 +420,17 @@ export const createIsolateWorker = async (
 
     async createContext(options?: CreateContextOptions): Promise<Context> {
       const id = state.nextId++;
+      const checkpoint =
+        options?.checkpoint === undefined
+          ? undefined
+          : {
+              ...options.checkpoint,
+              data: validateContextCheckpoint(options.checkpoint),
+            };
       await send<number>(state, {
         id,
         op: "createContext",
-        checkpoint: options?.checkpoint,
+        checkpoint,
         seed: options?.seed,
         snapshot: options?.snapshot,
       });

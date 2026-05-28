@@ -60,6 +60,7 @@ import {
   createSuccessReceipt,
 } from "../receipt";
 import { enforceResultSize } from "../resultLimits";
+import { validateContextCheckpoint } from "../checkpoint";
 
 const encodedBytes = (value: unknown): number | undefined => {
   try {
@@ -595,7 +596,10 @@ export const createIsolateFfi = async (
       }
 
       // Restore checkpoint/snapshot first so seed code can read it.
-      const restoredData = opts?.checkpoint?.data ?? opts?.snapshot;
+      const restoredData =
+        opts?.checkpoint === undefined
+          ? opts?.snapshot
+          : validateContextCheckpoint(opts.checkpoint);
       if (restoredData !== undefined) {
         const global = symbols.JSContextGetGlobalObject(ctx);
         const exc = new BigUint64Array(1);
@@ -795,6 +799,7 @@ const makeFfiContext = (
         );
         const name = readJsString(symbols, nameRef);
         if (name === "globalThis") continue;
+        if ((HARDEN_TARGETS as readonly string[]).includes(name)) continue;
         if (options?.include !== undefined && !options.include.includes(name)) {
           entries.push([name, undefined]);
           continue;

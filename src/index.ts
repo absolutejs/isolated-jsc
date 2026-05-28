@@ -7,6 +7,7 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
+export { validateContextCheckpoint } from "./checkpoint";
 export { createIsolatedRunner, runIsolated, runIsolatedFile } from "./run";
 export {
   CapabilityError,

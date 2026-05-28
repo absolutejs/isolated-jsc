@@ -6,6 +6,11 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { createIsolate, type Isolate } from "../src";
+import { resolveJscLibrary } from "../src/ffi/resolver";
+
+const checkpointBackends = (
+  resolveJscLibrary().kind === "found" ? ["worker", "ffi"] : ["worker"]
+) as Array<"worker" | "ffi">;
 
 let isolate: Isolate | null = null;
 afterEach(async () => {
@@ -177,4 +182,64 @@ describe("context.checkpoint()", () => {
     );
     expect(filtered.skippedCount).toBe(2);
   });
+
+  test("restore validates checkpoint shape before seed runs", async () => {
+    isolate = await createIsolate({ backend: "worker" });
+    const invalid = {
+      backend: "worker",
+      byteLength: 2,
+      data: {},
+      included: 0,
+      schemaVersion: 999,
+      skipped: [],
+      skippedCount: 0,
+    };
+
+    await expect(
+      isolate.createContext({
+        checkpoint: invalid as never,
+        seed: "this.shouldNotRun = true",
+      }),
+    ).rejects.toThrow(/schemaVersion/);
+  });
+
+  test.each(checkpointBackends)(
+    "checkpoint contract is stable on %s backend",
+    async (backend) => {
+      isolate = await createIsolate({ backend });
+      const context = await isolate.createContext({
+        seed: `
+          this.counter = 40;
+          this.keep = { label: "checkpoint" };
+          this.skipFn = function () { return counter };
+          this.large = "x".repeat(128);
+        `,
+      });
+      const checkpoint = await context.checkpoint({
+        include: ["counter", "keep", "skipFn", "large"],
+        maxBytes: 80,
+      });
+
+      expect(checkpoint.schemaVersion).toBe(1);
+      expect(checkpoint.backend).toBe(backend);
+      expect(checkpoint.data.counter).toBe(40);
+      expect(checkpoint.data.keep).toEqual({ label: "checkpoint" });
+      expect(checkpoint.skipped).toEqual(
+        expect.arrayContaining([
+          { key: "skipFn", reason: "not-clonable" },
+          expect.objectContaining({
+            key: "large",
+            reason: "over-max-bytes",
+          }),
+        ]),
+      );
+
+      const restored = await isolate.createContext({
+        checkpoint,
+        seed: "this.result = counter + 2",
+      });
+      const script = await isolate.compileScript("result");
+      expect(await script.run(restored)).toBe(42);
+    },
+  );
 });

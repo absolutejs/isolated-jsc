@@ -2,6 +2,14 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.20 - 2026-05-28
+
+### Added
+
+- Added `validateContextCheckpoint()` and runtime restore validation so malformed persisted checkpoints fail before seed code runs.
+- Added backend parity tests for checkpoint metadata, skip reasons, byte limits, and restore behavior on Worker and FFI when available.
+- Added a runnable checkpoint persistence/resume example via `bun run example:checkpoint`.
+
 ## 0.8.19 - 2026-05-28
 
 ### Added
