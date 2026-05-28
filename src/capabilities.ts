@@ -18,6 +18,11 @@ export type CapabilityAuditEvent<TContext = unknown> = {
 };
 
 export type CapabilityValidator<T> = (value: unknown) => T;
+export type CapabilityAuditRedactor<TContext = unknown> = (
+  value: unknown,
+  context: TContext,
+  tool: string,
+) => unknown;
 
 export type CapabilityRisk =
   | "read-only"
@@ -42,6 +47,8 @@ export type CapabilityManifestEntry = {
   input?: CapabilitySchemaDescriptor;
   name: string;
   output?: CapabilitySchemaDescriptor;
+  redactsInput?: boolean;
+  redactsOutput?: boolean;
   risk: CapabilityRisk;
   timeoutMs?: number;
 };
@@ -56,6 +63,8 @@ export type CapabilityTool<
   handler: (input: TInput, context: TContext) => TOutput | Promise<TOutput>;
   input?: CapabilitySchemaDescriptor;
   output?: CapabilitySchemaDescriptor;
+  redactAuditInput?: CapabilityAuditRedactor<TContext>;
+  redactAuditOutput?: CapabilityAuditRedactor<TContext>;
   risk?: CapabilityRisk;
   validateInput?: CapabilityValidator<TInput>;
   validateOutput?: CapabilityValidator<TOutput>;
@@ -130,6 +139,8 @@ export type CapabilityBrokerOptions<TContext = unknown> = {
   defaultConcurrency?: number;
   defaultTimeoutMs?: number;
   onAudit?: (event: CapabilityAuditEvent<TContext>) => void;
+  redactAuditInput?: CapabilityAuditRedactor<TContext>;
+  redactAuditOutput?: CapabilityAuditRedactor<TContext>;
 };
 
 export type CapabilityBroker = {
@@ -151,6 +162,7 @@ export class CapabilityError extends Error {
 }
 
 const now = () => performance.now();
+const REDACTION_FAILED = "[audit redaction failed]";
 
 const timeout = (tool: string, timeoutMs: number): Promise<never> =>
   new Promise((_, reject) => {
@@ -173,6 +185,36 @@ export const createCapabilityBroker = <
   options: CapabilityBrokerOptions<TContext>,
 ): CapabilityBrokerFor<TTools> => {
   const active = new Map<string, number>();
+  const redact = (
+    redactor: CapabilityAuditRedactor<TContext> | undefined,
+    value: unknown,
+    toolName: string,
+  ): unknown => {
+    if (redactor === undefined) return value;
+    try {
+      return redactor(value, options.context, toolName);
+    } catch {
+      return REDACTION_FAILED;
+    }
+  };
+
+  const auditInput = (
+    toolName: string,
+    tool?: AnyCapabilityTool<TContext>,
+    input?: unknown,
+  ): unknown =>
+    redact(tool?.redactAuditInput ?? options.redactAuditInput, input, toolName);
+
+  const auditOutput = (
+    toolName: string,
+    tool: AnyCapabilityTool<TContext>,
+    output: unknown,
+  ): unknown =>
+    redact(
+      tool.redactAuditOutput ?? options.redactAuditOutput,
+      output,
+      toolName,
+    );
 
   const manifest = (): CapabilityManifestEntry[] =>
     Object.entries(tools).map(([name, tool]) => {
@@ -180,6 +222,12 @@ export const createCapabilityBroker = <
         hasInputValidator: tool.validateInput !== undefined,
         hasOutputValidator: tool.validateOutput !== undefined,
         name,
+        redactsInput:
+          tool.redactAuditInput !== undefined ||
+          options.redactAuditInput !== undefined,
+        redactsOutput:
+          tool.redactAuditOutput !== undefined ||
+          options.redactAuditOutput !== undefined,
         risk: tool.risk ?? "unknown",
       };
       if (tool.concurrency !== undefined) entry.concurrency = tool.concurrency;
@@ -205,7 +253,7 @@ export const createCapabilityBroker = <
       audit({
         context: options.context,
         error,
-        input,
+        input: auditInput(toolName, undefined, input),
         status: "rejected",
         tool: toolName,
       });
@@ -223,7 +271,7 @@ export const createCapabilityBroker = <
       audit({
         context: options.context,
         error,
-        input,
+        input: auditInput(toolName, tool, input),
         status: "rejected",
         tool: toolName,
       });
@@ -231,8 +279,14 @@ export const createCapabilityBroker = <
     }
 
     const started = now();
+    const redactedInput = auditInput(toolName, tool, input);
     active.set(toolName, running + 1);
-    audit({ context: options.context, input, status: "start", tool: toolName });
+    audit({
+      context: options.context,
+      input: redactedInput,
+      status: "start",
+      tool: toolName,
+    });
 
     try {
       const parsedInput =
@@ -250,8 +304,8 @@ export const createCapabilityBroker = <
       audit({
         context: options.context,
         durationMs: now() - started,
-        input,
-        output,
+        input: redactedInput,
+        output: auditOutput(toolName, tool, output),
         status: "success",
         tool: toolName,
       });
@@ -263,7 +317,7 @@ export const createCapabilityBroker = <
         context: options.context,
         durationMs: now() - started,
         error,
-        input,
+        input: redactedInput,
         status:
           error instanceof CapabilityError &&
           error.code === "CAPABILITY_TIMEOUT"

@@ -118,6 +118,8 @@ describe("createCapabilityBroker", () => {
         input: { name: "LookupOrderInput" },
         name: "lookupOrder",
         output: "Order | null",
+        redactsInput: false,
+        redactsOutput: false,
         risk: "read-only",
         timeoutMs: 250,
       },
@@ -125,12 +127,92 @@ describe("createCapabilityBroker", () => {
         hasInputValidator: false,
         hasOutputValidator: false,
         name: "writeAudit",
+        redactsInput: false,
+        redactsOutput: false,
         risk: "unknown",
       },
     ]);
     expect(JSON.parse(JSON.stringify(broker.manifest()))).toEqual(
       broker.manifest(),
     );
+  });
+
+  test("redacts capability audit inputs and outputs", async () => {
+    const audit: CapabilityAuditEvent<{ tenantId: string }>[] = [];
+    const broker = createCapabilityBroker(
+      {
+        lookupSecret: defineCapabilityTool<
+          { token: string },
+          { token: string; value: string },
+          { tenantId: string }
+        >({
+          input: "LookupSecretInput",
+          output: "SecretLookup",
+          redactAuditInput: (input) => {
+            const object = asObject(input);
+            return { token: String(object.token).slice(0, 3) + "..." };
+          },
+          redactAuditOutput: () => ({ value: "[redacted]" }),
+          validateInput: (input) => {
+            const object = asObject(input);
+            return { token: String(object.token) };
+          },
+          handler: ({ token }) => ({ token, value: "customer-secret" }),
+        }),
+      },
+      {
+        context: { tenantId: "tenant-a" },
+        onAudit: (event) => audit.push(event),
+      },
+    );
+
+    expect(await broker.call("lookupSecret", { token: "sk_live_123" })).toEqual(
+      {
+        token: "sk_live_123",
+        value: "customer-secret",
+      },
+    );
+    expect(broker.manifest()[0]).toMatchObject({
+      name: "lookupSecret",
+      redactsInput: true,
+      redactsOutput: true,
+    });
+    expect(audit).toHaveLength(2);
+    expect(audit[0]?.input).toEqual({ token: "sk_..." });
+    expect(audit[1]?.input).toEqual({ token: "sk_..." });
+    expect(audit[1]?.output).toEqual({ value: "[redacted]" });
+  });
+
+  test("uses broker-level audit redaction for rejections", async () => {
+    const audit: CapabilityAuditEvent[] = [];
+    const broker = createCapabilityBroker(
+      {
+        fail: {
+          validateInput: () => {
+            throw new Error("nope");
+          },
+          handler: () => "unreachable",
+        },
+      },
+      {
+        context: undefined,
+        onAudit: (event) => audit.push(event),
+        redactAuditInput: () => "[input redacted]",
+      },
+    );
+
+    const error = await expectError(broker.call("fail", { token: "secret" }));
+    expect(error.message).toBe("nope");
+    expect(audit.map((event) => event.status)).toEqual(["start", "error"]);
+    expect(audit.every((event) => event.input === "[input redacted]")).toBe(
+      true,
+    );
+
+    const missing = await expectError(
+      broker.call("missing", { token: "secret" }),
+    );
+    expect(missing).toBeInstanceOf(CapabilityError);
+    expect(audit.at(-1)?.input).toBe("[input redacted]");
   });
 
   test("enforces per-tool timeout", async () => {

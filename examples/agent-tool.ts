@@ -58,6 +58,16 @@ const broker = createCapabilityBroker(
       TenantContext
     >({
       concurrency: 2,
+      description: "Read one order by id for the current tenant",
+      input: "OrderLookup",
+      output: "OrderRecord | null",
+      redactAuditInput: (input) => ({ id: (input as { id?: unknown }).id }),
+      redactAuditOutput: (output) => {
+        if (output === null) return null;
+        const order = output as OrderRecord;
+        return { id: order.id, status: order.status };
+      },
+      risk: "read-only",
       timeoutMs: 100,
       validateInput: requireOrderLookup,
       handler: async ({ id }, context) => {
@@ -69,6 +79,11 @@ const broker = createCapabilityBroker(
       },
     }),
     summarize: defineCapabilityTool<string, string, TenantContext>({
+      description: "Summarize caller-provided text",
+      input: "string",
+      output: "string",
+      redactAuditInput: () => "[text redacted]",
+      risk: "read-only",
       timeoutMs: 100,
       validateInput: (input) => String(input),
       handler: (text) => text.split(/\s+/).slice(0, 8).join(" "),
@@ -110,7 +125,13 @@ try {
     { timeout: 500 },
   );
 
-  console.log(JSON.stringify({ result, metrics, audit }, null, 2));
+  console.log(
+    JSON.stringify(
+      { result, metrics, manifest: broker.manifest(), audit },
+      null,
+      2,
+    ),
+  );
 } finally {
   await isolate.dispose();
 }

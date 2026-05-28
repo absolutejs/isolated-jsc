@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.6 - 2026-05-28
+
+### Added
+
+- Added capability audit redaction hooks. Brokers now support default `redactAuditInput` / `redactAuditOutput` callbacks, tools can override them per capability, and manifests report whether each capability redacts audited inputs or outputs.
+
 ## 0.8.5 - 2026-05-28
 
 ### Fixed

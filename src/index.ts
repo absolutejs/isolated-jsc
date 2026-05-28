@@ -15,6 +15,7 @@ export {
 } from "./capabilities";
 export type {
   CapabilityAuditEvent,
+  CapabilityAuditRedactor,
   CapabilityAuditStatus,
   CapabilityBroker,
   CapabilityBrokerCall,

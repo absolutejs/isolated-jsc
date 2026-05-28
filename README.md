@@ -41,7 +41,7 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.8.0)
+## What ships today (v0.8.6)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -64,6 +64,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 - **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with execution id, backend, policy, resource settings, timing, output size, and capability-call summaries.
+- **Capability audit redaction.** Brokers support default `redactAuditInput` / `redactAuditOutput` hooks, and each tool can override them before audit events hit logs or receipts.
 - **Result size limits.** Pass `maxResultBytes` in run options to reject oversized successful outputs with `ResultSizeError` before application code accepts them.
 - **Console output limits.** Pass `maxConsoleEntries` / `maxConsoleBytes` when creating an isolate to drop excess captured console events and surface overflow flags in receipts.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
@@ -181,6 +182,12 @@ const broker = createCapabilityBroker(
       risk: "read-only",
       input: { name: "LookupOrderInput" },
       output: "Order | null",
+      redactAuditInput: (input) => ({ id: (input as { id?: unknown }).id }),
+      redactAuditOutput: (output) => {
+        if (output === null) return null;
+        const order = output as Order;
+        return { id: order.id, status: order.status };
+      },
       timeoutMs: 250,
       validateInput: (input) => {
         if (input === null || typeof input !== "object") {
@@ -212,7 +219,9 @@ broker.manifest();
 //   output: "Order | null",
 //   timeoutMs: 250,
 //   hasInputValidator: true,
-//   hasOutputValidator: false
+//   hasOutputValidator: false,
+//   redactsInput: true,
+//   redactsOutput: true
 // }]
 
 // Sandbox calls still use an untrusted-code-safe Reference.
