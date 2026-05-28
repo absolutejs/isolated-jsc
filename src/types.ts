@@ -15,11 +15,30 @@
  * users noticing.
  */
 
+import type { IsolatePolicyName, ResolvedIsolatePolicy } from "./policy";
+
 /** Backend implementation selected for an {@link Isolate}. */
 export type IsolateBackend = "ffi" | "worker";
 
 /** Construction options for an {@link Isolate}. */
 export type IsolateOptions = {
+  /**
+   * Product posture preset to apply before explicit options. Pass a preset
+   * name for the built-in defaults, or a {@link ResolvedIsolatePolicy} from
+   * {@link resolveIsolatePolicy} when you need overrides.
+   *
+   * Explicit `IsolateOptions` fields win over the preset, so
+   * `createIsolate({ policy: "ai-tool", memoryLimit: 256 })` keeps the
+   * AI-tool timeout/hardening defaults but raises the heap cap.
+   */
+  policy?: IsolatePolicyName | ResolvedIsolatePolicy;
+  /**
+   * Per-isolate defaults for {@link Script.run}, {@link Script.runWithMetrics},
+   * {@link Callable.call}, and {@link Callable.callWithMetrics}. Call-level
+   * options still win. Policy presets populate this with their runtime
+   * timeout.
+   */
+  defaultRunOptions?: Pick<RunOptions, "timeout">;
   /**
    * Hard cap on heap memory (MB). When the isolate's heap exceeds this, the
    * isolate is terminated and any in-flight `script.run` rejects with
@@ -108,6 +127,10 @@ export type IsolateOptions = {
 export type Isolate = {
   /** Construction options the isolate was built with. */
   readonly options: Readonly<Required<Pick<IsolateOptions, "memoryLimit">>>;
+  /** Runtime defaults applied when a run/call omits the corresponding option. */
+  readonly defaultRunOptions: Readonly<Required<Pick<RunOptions, "timeout">>>;
+  /** Resolved policy used to construct this isolate, when one was supplied. */
+  readonly policy?: ResolvedIsolatePolicy;
   /** Backend selected for this isolate after `auto` resolution. */
   readonly backend: IsolateBackend;
   /** `true` once {@link dispose} has been called or the isolate self-died. */

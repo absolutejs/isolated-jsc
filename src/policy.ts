@@ -29,6 +29,10 @@ export type ResolveIsolatePolicyOverrides = {
   allowWorkerFallback?: boolean;
 };
 
+export type PolicyAppliedIsolateOptions = Omit<IsolateOptions, "policy"> & {
+  policy?: ResolvedIsolatePolicy;
+};
+
 const policyDefaults = {
   "ai-tool": {
     console: { capture: "host" },
@@ -93,6 +97,14 @@ const clonePolicy = (policy: ResolvedIsolatePolicy): ResolvedIsolatePolicy => ({
   run: { ...policy.run },
 });
 
+const setIfDefined = <K extends keyof IsolateOptions>(
+  target: IsolateOptions,
+  key: K,
+  value: IsolateOptions[K],
+): void => {
+  if (value !== undefined) target[key] = value;
+};
+
 export const resolveIsolatePolicy = (
   name: IsolatePolicyName,
   overrides: ResolveIsolatePolicyOverrides = {},
@@ -113,4 +125,46 @@ export const resolveIsolatePolicy = (
   }
 
   return base;
+};
+
+export const applyIsolatePolicyOptions = (
+  options: IsolateOptions = {},
+): PolicyAppliedIsolateOptions => {
+  const { policy, defaultRunOptions, ...explicit } = options;
+  if (policy === undefined) {
+    return {
+      ...explicit,
+      defaultRunOptions:
+        defaultRunOptions === undefined ? undefined : { ...defaultRunOptions },
+    };
+  }
+
+  const resolved =
+    typeof policy === "string"
+      ? resolveIsolatePolicy(policy)
+      : clonePolicy(policy);
+  const applied: PolicyAppliedIsolateOptions = {
+    defaultRunOptions: {
+      ...resolved.run,
+      ...defaultRunOptions,
+    },
+    policy: resolved,
+  };
+
+  setIfDefined(applied, "backend", resolved.isolate.backend);
+  setIfDefined(applied, "harden", resolved.isolate.harden);
+  setIfDefined(applied, "memoryLimit", resolved.isolate.memoryLimit);
+
+  setIfDefined(applied, "backend", explicit.backend);
+  setIfDefined(applied, "harden", explicit.harden);
+  setIfDefined(applied, "memoryLimit", explicit.memoryLimit);
+  setIfDefined(applied, "bootstrap", explicit.bootstrap);
+  setIfDefined(applied, "onConsole", explicit.onConsole);
+  setIfDefined(
+    applied,
+    "unsafelyExposeGlobals",
+    explicit.unsafelyExposeGlobals,
+  );
+
+  return applied;
 };

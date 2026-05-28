@@ -26,6 +26,7 @@ import {
   type Script,
   TimeoutError,
 } from "./types";
+import type { ResolvedIsolatePolicy } from "./policy";
 import type {
   HostMessage,
   HostRequest,
@@ -33,6 +34,7 @@ import type {
   WorkerEvent,
   WorkerMessage,
 } from "./protocol";
+import { applyIsolatePolicyOptions } from "./policy";
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -63,6 +65,8 @@ type IsolateState = {
   refs: Map<number, (...args: unknown[]) => unknown>;
   nextRefId: number;
   onConsole: IsolateOptions["onConsole"];
+  defaultRunOptions: Required<Pick<RunOptions, "timeout">>;
+  policy: ResolvedIsolatePolicy | undefined;
 };
 
 /** Build the URL of the worker entrypoint relative to this module. Resolves
@@ -253,7 +257,8 @@ const handleEvent = (state: IsolateState, event: WorkerEvent): void => {
 export const createIsolateWorker = async (
   options: IsolateOptions = {},
 ): Promise<Isolate> => {
-  const memoryLimit = options.memoryLimit ?? 256;
+  const effectiveOptions = applyIsolatePolicyOptions(options);
+  const memoryLimit = effectiveOptions.memoryLimit ?? 256;
   const worker = new Worker(workerUrl.href, { type: "module" });
 
   const state: IsolateState = {
@@ -265,7 +270,11 @@ export const createIsolateWorker = async (
     nextId: 1,
     refs: new Map(),
     nextRefId: 1,
-    onConsole: options.onConsole,
+    onConsole: effectiveOptions.onConsole,
+    defaultRunOptions: {
+      timeout: effectiveOptions.defaultRunOptions?.timeout ?? 1000,
+    },
+    policy: effectiveOptions.policy,
   };
 
   // Use `onmessage`/`onerror` setters (not addEventListener) — Bun's Worker
@@ -313,16 +322,18 @@ export const createIsolateWorker = async (
   worker.postMessage({
     op: "init",
     memoryLimitMb: memoryLimit,
-    bootstrap: options.bootstrap,
-    captureConsole: options.onConsole !== undefined,
-    harden: options.harden !== false,
-    unsafelyExposeGlobals: options.unsafelyExposeGlobals,
+    bootstrap: effectiveOptions.bootstrap,
+    captureConsole: effectiveOptions.onConsole !== undefined,
+    harden: effectiveOptions.harden !== false,
+    unsafelyExposeGlobals: effectiveOptions.unsafelyExposeGlobals,
   } satisfies HostMessage);
 
   await ready;
 
   const isolate: Isolate = {
     options: state.options,
+    defaultRunOptions: state.defaultRunOptions,
+    policy: state.policy,
     backend: "worker",
     get isDisposed(): boolean {
       return state.disposed;
@@ -503,7 +514,7 @@ const makeScript = (
     isolate,
 
     async run(context: Context, options: RunOptions = {}): Promise<unknown> {
-      const timeoutMs = options.timeout ?? 1000;
+      const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const wire = await raceWithTimeout<WireValue>(
         state,
@@ -520,7 +531,7 @@ const makeScript = (
     },
 
     async runWithMetrics(context: Context, options: RunOptions = {}) {
-      const timeoutMs = options.timeout ?? 1000;
+      const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const { result, metrics } = await raceWithTimeout<{
         result: WireValue;
@@ -567,7 +578,7 @@ const makeCallable = (
     context,
 
     async call(args: unknown[], options: RunOptions = {}): Promise<unknown> {
-      const timeoutMs = options.timeout ?? 1000;
+      const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const wire = await raceWithTimeout<WireValue>(
         state,
@@ -586,7 +597,7 @@ const makeCallable = (
       args: unknown[],
       options: RunOptions = {},
     ): Promise<RunWithMetricsResult> {
-      const timeoutMs = options.timeout ?? 1000;
+      const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const { result, metrics } = await raceWithTimeout<{
         result: WireValue;
@@ -632,7 +643,8 @@ const makeCallable = (
 export const createIsolate = async (
   options: IsolateOptions = {},
 ): Promise<Isolate> => {
-  // Order: explicit option > env var > "auto". The env var
+  const appliedOptions = applyIsolatePolicyOptions(options);
+  // Order: explicit option > env var > policy default > "auto". The env var
   // (`ISOLATED_JSC_BACKEND`) is useful for pinning the backend in test
   // suites and for ops scripts that need consistent behaviour across
   // machines with / without libJSC installed.
@@ -641,14 +653,16 @@ export const createIsolate = async (
     | "ffi"
     | "worker"
     | undefined;
-  const backend =
-    options.backend ??
-    (envBackend === "auto" || envBackend === "ffi" || envBackend === "worker"
+  const envBackendOverride =
+    envBackend === "auto" || envBackend === "ffi" || envBackend === "worker"
       ? envBackend
-      : "auto");
+      : undefined;
+  const backend =
+    options.backend ?? envBackendOverride ?? appliedOptions.backend ?? "auto";
+  const backendOptions = { ...appliedOptions, backend };
 
   if (backend === "worker") {
-    return createIsolateWorker(options);
+    return createIsolateWorker(backendOptions);
   }
 
   // Both "ffi" and "auto" try FFI first. Dynamic import so non-Bun runtimes
@@ -656,10 +670,11 @@ export const createIsolate = async (
   // the Worker backend without crashing at module load.
   try {
     const { createIsolateFfi } = await import("./ffi/backend");
-    return await createIsolateFfi(options);
+    return await createIsolateFfi(backendOptions);
   } catch (error) {
     if (backend === "ffi") throw error;
+    if (appliedOptions.policy?.fallback.allowWorker === false) throw error;
     // "auto": silently fall back to Worker.
-    return createIsolateWorker(options);
+    return createIsolateWorker(backendOptions);
   }
 };

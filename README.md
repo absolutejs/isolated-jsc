@@ -64,7 +64,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
-- **Policy presets.** `resolveIsolatePolicy("ai-tool" | "tenant-script" | "plugin" | "trusted", overrides?)` returns standardized isolate/run defaults and policy metadata without changing `createIsolate` behavior.
+- **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
 
 ### Bun sandboxing decision guide
 
@@ -192,13 +192,12 @@ const order = await broker.call("lookupOrder", { id: "ord_123" });
 // Sandbox calls still use an untrusted-code-safe Reference.
 await context.setGlobal("tools", broker.reference);
 
-// Policy presets are pure helpers today: use them to standardize product
-// posture before passing options to createIsolate and Script.run.
+// Policy presets standardize both isolate construction and default run timeout.
 const policy = resolveIsolatePolicy("ai-tool", { timeout: 750 });
-const policyIsolate = await createIsolate(policy.isolate);
+const policyIsolate = await createIsolate({ policy });
 const policyContext = await policyIsolate.createContext();
 const policyScript = await policyIsolate.compileScript("1 + 1");
-await policyScript.run(policyContext, policy.run);
+await policyScript.run(policyContext);
 await policyIsolate.dispose();
 
 await isolate.dispose();

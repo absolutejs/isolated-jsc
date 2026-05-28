@@ -47,6 +47,8 @@ import {
 } from "../types";
 import { openJsc, type JscSymbols } from "./bindings";
 import { hostToJs, jsToHost, makeJsString, readJsString } from "./values";
+import { applyIsolatePolicyOptions } from "../policy";
+import type { ResolvedIsolatePolicy } from "../policy";
 
 // Same HARDEN_TARGETS the Worker backend uses (T2.1).
 const HARDEN_TARGETS = [
@@ -100,6 +102,8 @@ type IsolateFfiState = {
   nextCallableId: number;
   disposed: boolean;
   options: Required<Pick<IsolateOptions, "memoryLimit">>;
+  defaultRunOptions: Required<Pick<RunOptions, "timeout">>;
+  policy: ResolvedIsolatePolicy | undefined;
   memoryLimitBytes: number;
   /** Set the watchdog observed before terminating; surfaced as the
    * MemoryLimitError observedBytes on the next caller. */
@@ -294,11 +298,12 @@ const evalAndCheck = (
 export const createIsolateFfi = async (
   options: IsolateOptions = {},
 ): Promise<Isolate> => {
+  const effectiveOptions = applyIsolatePolicyOptions(options);
   const probe = openJsc();
   if (!probe.ok) throw probe.error;
   const symbols = probe.symbols;
 
-  const memoryLimit = options.memoryLimit ?? 128;
+  const memoryLimit = effectiveOptions.memoryLimit ?? 128;
   const group = symbols.JSContextGroupCreate();
 
   const state: IsolateFfiState = {
@@ -315,6 +320,10 @@ export const createIsolateFfi = async (
     nextCallableId: 1,
     disposed: false,
     options: { memoryLimit },
+    defaultRunOptions: {
+      timeout: effectiveOptions.defaultRunOptions?.timeout ?? 1000,
+    },
+    policy: effectiveOptions.policy,
     memoryLimitBytes: memoryLimit * 1024 * 1024,
     lastMemorySnapshot: 0,
     watchdogCallback: null,
@@ -335,10 +344,13 @@ export const createIsolateFfi = async (
   // Run bootstrap once in a synthetic context at the worker module level
   // — same as Worker backend's bootstrap. We create a throwaway ctx,
   // eval, throw it away.
-  if (typeof options.bootstrap === "string" && options.bootstrap.length > 0) {
+  if (
+    typeof effectiveOptions.bootstrap === "string" &&
+    effectiveOptions.bootstrap.length > 0
+  ) {
     const bootCtx = symbols.JSGlobalContextCreateInGroup(group, 0n);
     try {
-      evalAndCheck(state, bootCtx, options.bootstrap, "<bootstrap>");
+      evalAndCheck(state, bootCtx, effectiveOptions.bootstrap, "<bootstrap>");
     } catch {
       // Bootstrap failures are silent (same as Worker backend).
     }
@@ -347,6 +359,8 @@ export const createIsolateFfi = async (
 
   const isolate: Isolate = {
     options: state.options,
+    defaultRunOptions: state.defaultRunOptions,
+    policy: state.policy,
     backend: "ffi",
     get isDisposed(): boolean {
       return state.disposed;
@@ -389,8 +403,8 @@ export const createIsolateFfi = async (
       state.contexts.set(id, ctx);
 
       // Hardening: install undefined shadows + disable eval. Default on.
-      if (options.harden !== false) {
-        applyHarden(state, ctx, options.unsafelyExposeGlobals ?? []);
+      if (effectiveOptions.harden !== false) {
+        applyHarden(state, ctx, effectiveOptions.unsafelyExposeGlobals ?? []);
       }
 
       // Restore snapshot first so seed code can read it.
@@ -661,7 +675,7 @@ const makeFfiCallable = (
     }
     const s = state.symbols;
 
-    const timeoutMs = options.timeout ?? 1000;
+    const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
     s.JSContextGroupSetExecutionTimeLimit(
       state.group,
       timeoutMs / 1000,
@@ -1088,7 +1102,7 @@ const makeFfiScript = (
     const ctx = state.contexts.get(contextIdOf(context));
     if (ctx === undefined) throw new IsolateDisposedError();
 
-    const timeoutMs = options.timeout ?? 1000;
+    const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
     // JSC's time limit is in seconds (double). Update before each eval.
     state.symbols.JSContextGroupSetExecutionTimeLimit(
       state.group,

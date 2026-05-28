@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { resolveIsolatePolicy } from "../src";
+import { createIsolate, resolveIsolatePolicy, TimeoutError } from "../src";
+
+const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("promise did not reject");
+};
 
 describe("resolveIsolatePolicy", () => {
   test("ai-tool defaults require FFI and tight resource limits", () => {
@@ -72,5 +81,38 @@ describe("resolveIsolatePolicy", () => {
     expect(fresh.run.timeout).toBe(1000);
     expect(fresh.console.capture).toBe("host");
     expect(fresh.fallback.allowWorker).toBe(false);
+  });
+});
+
+describe("createIsolate policy", () => {
+  test("applies policy defaults while letting explicit isolate options win", async () => {
+    const isolate = await createIsolate({
+      backend: "worker",
+      defaultRunOptions: { timeout: 1234 },
+      memoryLimit: 256,
+      policy: "trusted",
+    });
+
+    expect(isolate.backend).toBe("worker");
+    expect(isolate.policy?.name).toBe("trusted");
+    expect(isolate.options.memoryLimit).toBe(256);
+    expect(isolate.defaultRunOptions.timeout).toBe(1234);
+
+    await isolate.dispose();
+  });
+
+  test("uses policy run timeout as the per-isolate default", async () => {
+    const policy = resolveIsolatePolicy("trusted", {
+      memoryLimit: 256,
+      timeout: 50,
+    });
+    const isolate = await createIsolate({ backend: "worker", policy });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript("while (true) {}");
+
+    const err = await rejection(script.run(context));
+    expect(err).toBeInstanceOf(TimeoutError);
+    expect((err as TimeoutError).timeoutMs).toBe(50);
+    expect(isolate.isDisposed).toBe(true);
   });
 });

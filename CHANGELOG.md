@@ -7,7 +7,7 @@ All notable changes to `@absolutejs/isolated-jsc` are documented here.
 ### Added
 
 - Added backend observability: every isolate now exposes `isolate.backend`, per-run metrics include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend/JSC probe details.
-- Added `resolveIsolatePolicy()` with `ai-tool`, `tenant-script`, `plugin`, and `trusted` presets for standardizing isolate/run posture before wiring policy into runtime construction.
+- Added `resolveIsolatePolicy()` with `ai-tool`, `tenant-script`, `plugin`, and `trusted` presets, plus `createIsolate({ policy })` support that applies preset isolate options and default run timeouts.
 
 ## 0.7.3 - 2026-05-27
 
