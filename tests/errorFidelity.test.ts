@@ -204,6 +204,7 @@ describe("script.runWithMetrics", () => {
       outputTruncated: false,
       policy: "tenant-script",
       purpose: "ai-tool-call",
+      schemaVersion: 1,
       status: "success",
       tenant: "tenant-a",
       timeoutMs: 500,

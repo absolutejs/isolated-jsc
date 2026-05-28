@@ -74,6 +74,7 @@ describe("runIsolated", () => {
     expect(result.receipt).toMatchObject({
       backend: "worker",
       executionId: "run_isolated_receipt",
+      schemaVersion: 1,
       status: "success",
       tenant: "tenant-a",
     });

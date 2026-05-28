@@ -356,6 +356,7 @@ export type ExecutionReceipt = {
   outputTruncated: boolean;
   policy?: IsolatePolicyName;
   purpose?: string;
+  schemaVersion: 1;
   startedAt: string;
   status: ExecutionReceiptStatus;
   tenant?: string;

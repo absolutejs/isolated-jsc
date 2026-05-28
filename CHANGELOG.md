@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.12 - 2026-05-28
+
+### Added
+
+- Added `schemaVersion: 1` to capability manifest entries and execution receipts so applications can parse and persist these audit surfaces against an explicit stable schema version.
+
 ## 0.8.11 - 2026-05-28
 
 ### Fixed

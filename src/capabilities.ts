@@ -80,6 +80,7 @@ export type CapabilityManifestEntry = {
   redactsInput?: boolean;
   redactsOutput?: boolean;
   risk: CapabilityRisk;
+  schemaVersion: 1;
   timeoutMs?: number;
 };
 
@@ -335,6 +336,7 @@ export const createCapabilityBroker = <
           tool.redactAuditOutput !== undefined ||
           options.redactAuditOutput !== undefined,
         risk: tool.risk ?? "unknown",
+        schemaVersion: 1,
       };
       if (tool.concurrency !== undefined) entry.concurrency = tool.concurrency;
       if (tool.description !== undefined) entry.description = tool.description;

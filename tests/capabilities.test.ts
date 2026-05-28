@@ -178,6 +178,7 @@ describe("createCapabilityBroker", () => {
         redactsInput: false,
         redactsOutput: false,
         risk: "read-only",
+        schemaVersion: 1,
         timeoutMs: 250,
       },
       {
@@ -187,6 +188,7 @@ describe("createCapabilityBroker", () => {
         redactsInput: false,
         redactsOutput: false,
         risk: "unknown",
+        schemaVersion: 1,
       },
     ]);
     expect(JSON.parse(JSON.stringify(broker.manifest()))).toEqual(
@@ -289,6 +291,7 @@ describe("createCapabilityBroker", () => {
         redactsInput: false,
         redactsOutput: false,
         risk: "unknown",
+        schemaVersion: 1,
       },
       {
         hasInputValidator: false,
@@ -298,6 +301,7 @@ describe("createCapabilityBroker", () => {
         redactsInput: false,
         redactsOutput: false,
         risk: "unknown",
+        schemaVersion: 1,
       },
     ]);
   });

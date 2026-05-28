@@ -185,6 +185,7 @@ describe("Context.compileCallable", () => {
       executionId: "call_receipt",
       outputTruncated: false,
       purpose: "tenant-script",
+      schemaVersion: 1,
       status: "success",
       tenant: "tenant-a",
     });

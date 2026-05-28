@@ -41,7 +41,7 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.8.11)
+## What ships today (v0.8.12)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -63,7 +63,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Context seed + snapshot (T2.3, new in 0.1).** `createContext({ seed, snapshot })` runs setup code (assign onto `this`) and restores cloneable data state from a previous `context.snapshot()`. Pair them to fork a fresh context from a prior one's accumulated state (the AI-agent-across-turns pattern).
 - **Error fidelity (T2.4, new in 0.1).** Errors thrown inside the isolate round-trip with `error.cause` (recursively) and enumerable own properties intact. Custom Error subclasses' instance data (`HttpError` with `.statusCode`, etc.) survives. `instanceof` doesn't work across the boundary; use `.name` / `.code` checks.
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
-- **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with execution id, backend, policy, resource settings, timing, output size, bounded capability-call summaries, and dropped-event counts.
+- **Execution receipts.** `script.runWithReceipt()`, `callable.callWithReceipt()`, `runIsolated(..., { withReceipt: true })`, and runner receipt modes return local audit records with `schemaVersion: 1`, execution id, backend, policy, resource settings, timing, output size, bounded capability-call summaries, and dropped-event counts.
 - **Capability audit redaction.** Brokers support default `redactAuditInput` / `redactAuditOutput` hooks, and each tool can override them before audit events hit logs or receipts.
 - **Bounded capability audit buffers.** `createCapabilityAuditBuffer({ maxEvents })` gives apps a receipt-ready `onAudit` sink with explicit truncation metadata, avoiding unbounded in-memory audit arrays when sandbox code spams host tools.
 - **Capability output limits.** Set `maxOutputBytes` per capability or `defaultMaxOutputBytes` on a broker to reject oversized host-tool outputs with `CapabilityError` before they return to sandbox code.
@@ -218,6 +218,7 @@ const order = await broker.call("lookupOrder", { id: "ord_123" });
 broker.manifest();
 // [{
 //   name: "lookupOrder",
+//   schemaVersion: 1,
 //   description: "Read one order by id for the current tenant",
 //   risk: "read-only",
 //   input: { name: "LookupOrderInput" },
