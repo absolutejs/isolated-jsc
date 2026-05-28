@@ -65,6 +65,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Per-run telemetry (T2.4, new in 0.1).** `script.runWithMetrics(ctx, opts)` returns `{ result, metrics: { backend, cpuMs, heapBytes } }` for billing / dashboards / per-call monitoring. Plain `run()` still returns the bare value.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
 - **Policy presets.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults; `resolveIsolatePolicy(name, overrides?)` returns the same policy object when you need to inspect or override it first.
+- **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
 
 ### Bun sandboxing decision guide
 
@@ -116,6 +117,7 @@ import {
   compileTypeScriptCallable,
   createIsolate,
   resolveIsolatePolicy,
+  runIsolated,
   Reference,
   ExternalCopy,
   type Isolate,
@@ -199,6 +201,20 @@ const policyContext = await policyIsolate.createContext();
 const policyScript = await policyIsolate.compileScript("1 + 1");
 await policyScript.run(policyContext);
 await policyIsolate.dispose();
+
+// One-shot execution for request/response paths.
+const oneShot = await runIsolated<number>("input.n * 2", {
+  policy: resolveIsolatePolicy("ai-tool", { timeout: 750 }),
+  globals: { input: { n: 21 } },
+});
+// oneShot === 42
+
+const measured = await runIsolated<number>("input.n + 1", {
+  policy: "tenant-script",
+  globals: { input: { n: 41 } },
+  withMetrics: true,
+});
+// measured.result === 42; measured.metrics.backend === "ffi" | "worker"
 
 await isolate.dispose();
 ```

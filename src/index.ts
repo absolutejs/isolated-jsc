@@ -7,6 +7,7 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
+export { runIsolated } from "./run";
 export {
   CapabilityError,
   createCapabilityBroker,
@@ -64,3 +65,4 @@ export type {
   Script,
 } from "./types";
 export type { IsolatePool, IsolatePoolOptions } from "./pool";
+export type { RunIsolatedOptions, RunIsolatedWithMetricsOptions } from "./run";
