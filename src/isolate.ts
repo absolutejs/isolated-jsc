@@ -81,7 +81,8 @@ type IsolateState = {
   nextRefId: number;
   onConsole: IsolateOptions["onConsole"];
   consoleLimits: ConsoleLimitState;
-  defaultRunOptions: Required<Pick<RunOptions, "timeout">>;
+  defaultRunOptions: Required<Pick<RunOptions, "timeout">> &
+    Pick<RunOptions, "maxResultBytes">;
   policy: ResolvedIsolatePolicy | undefined;
 };
 
@@ -326,6 +327,7 @@ export const createIsolateWorker = async (
       maxEntries: effectiveOptions.maxConsoleEntries,
     }),
     defaultRunOptions: {
+      maxResultBytes: effectiveOptions.defaultRunOptions?.maxResultBytes,
       timeout: effectiveOptions.defaultRunOptions?.timeout ?? 1000,
     },
     policy: effectiveOptions.policy,
@@ -568,6 +570,8 @@ const makeScript = (
     isolate,
 
     async run(context: Context, options: RunOptions = {}): Promise<unknown> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const wire = await raceWithTimeout<WireValue>(
@@ -576,7 +580,7 @@ const makeScript = (
           id,
           op: "run",
           contextId: contextIdOf(context),
-          maxResultBytes: options.maxResultBytes,
+          maxResultBytes,
           scriptId,
         }),
         timeoutMs,
@@ -586,6 +590,8 @@ const makeScript = (
     },
 
     async runWithMetrics(context: Context, options: RunOptions = {}) {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const { result, metrics } = await raceWithTimeout<{
@@ -597,7 +603,7 @@ const makeScript = (
           id,
           op: "run",
           contextId: contextIdOf(context),
-          maxResultBytes: options.maxResultBytes,
+          maxResultBytes,
           scriptId,
           withMetrics: true,
         }),
@@ -657,6 +663,8 @@ const makeCallable = (
     context,
 
     async call(args: unknown[], options: RunOptions = {}): Promise<unknown> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const wire = await raceWithTimeout<WireValue>(
@@ -666,7 +674,7 @@ const makeCallable = (
           op: "call",
           callableId,
           args: args.map((a) => toWire(state, a)),
-          maxResultBytes: options.maxResultBytes,
+          maxResultBytes,
         }),
         timeoutMs,
       );
@@ -677,6 +685,8 @@ const makeCallable = (
       args: unknown[],
       options: RunOptions = {},
     ): Promise<RunWithMetricsResult> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const timeoutMs = options.timeout ?? state.defaultRunOptions.timeout;
       const id = state.nextId++;
       const { result, metrics } = await raceWithTimeout<{
@@ -689,7 +699,7 @@ const makeCallable = (
           op: "call",
           callableId,
           args: args.map((a) => toWire(state, a)),
-          maxResultBytes: options.maxResultBytes,
+          maxResultBytes,
           withMetrics: true,
         }),
         timeoutMs,

@@ -35,10 +35,10 @@ export type IsolateOptions = {
   /**
    * Per-isolate defaults for {@link Script.run}, {@link Script.runWithMetrics},
    * {@link Callable.call}, and {@link Callable.callWithMetrics}. Call-level
-   * options still win. Policy presets populate this with their runtime
-   * timeout.
+   * options still win. Policy recipes populate this with their runtime
+   * timeout and result-size limit.
    */
-  defaultRunOptions?: Pick<RunOptions, "timeout">;
+  defaultRunOptions?: Pick<RunOptions, "maxResultBytes" | "timeout">;
   /**
    * Hard cap on heap memory (MB). When the isolate's heap exceeds this, the
    * isolate is terminated and any in-flight `script.run` rejects with
@@ -138,7 +138,9 @@ export type Isolate = {
   /** Construction options the isolate was built with. */
   readonly options: Readonly<Required<Pick<IsolateOptions, "memoryLimit">>>;
   /** Runtime defaults applied when a run/call omits the corresponding option. */
-  readonly defaultRunOptions: Readonly<Required<Pick<RunOptions, "timeout">>>;
+  readonly defaultRunOptions: Readonly<
+    Required<Pick<RunOptions, "timeout">> & Pick<RunOptions, "maxResultBytes">
+  >;
   /** Resolved policy used to construct this isolate, when one was supplied. */
   readonly policy?: ResolvedIsolatePolicy;
   /** Backend selected for this isolate after `auto` resolution. */

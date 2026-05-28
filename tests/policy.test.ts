@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createIsolate, resolveIsolatePolicy, TimeoutError } from "../src";
+import {
+  createIsolate,
+  resolveIsolatePolicy,
+  ResultSizeError,
+  TimeoutError,
+} from "../src";
 
 const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
@@ -21,6 +26,25 @@ describe("resolveIsolatePolicy", () => {
       memoryLimit: 128,
     });
     expect(policy.run.timeout).toBe(1000);
+    expect(policy.recipe.run).toEqual({
+      maxResultBytes: 65536,
+      timeout: 1000,
+    });
+    expect(policy.recipe.console).toEqual({
+      maxBytes: 16384,
+      maxEntries: 32,
+    });
+    expect(policy.recipe.audit.maxEvents).toBe(100);
+    expect(policy.recipe.broker).toEqual({
+      defaultConcurrency: 8,
+      defaultMaxOutputBytes: 65536,
+      defaultTimeoutMs: 250,
+    });
+    expect(policy.recipe.pool).toEqual({
+      idleMs: 60000,
+      maxSize: 64,
+      recycleAfter: 1000,
+    });
     expect(policy.console.capture).toBe("host");
     expect(policy.fallback.allowWorker).toBe(false);
   });
@@ -32,6 +56,10 @@ describe("resolveIsolatePolicy", () => {
     expect(policy.isolate.harden).toBe(true);
     expect(policy.isolate.memoryLimit).toBe(256);
     expect(policy.run.timeout).toBe(5000);
+    expect(policy.recipe.run.maxResultBytes).toBe(262144);
+    expect(policy.recipe.audit.maxEvents).toBe(200);
+    expect(policy.recipe.broker.defaultMaxOutputBytes).toBe(131072);
+    expect(policy.recipe.pool.maxSize).toBe(128);
     expect(policy.fallback.allowWorker).toBe(true);
   });
 
@@ -42,6 +70,8 @@ describe("resolveIsolatePolicy", () => {
     expect(policy.isolate.harden).toBe(true);
     expect(policy.isolate.memoryLimit).toBe(192);
     expect(policy.run.timeout).toBe(2000);
+    expect(policy.recipe.broker.defaultConcurrency).toBe(4);
+    expect(policy.recipe.console.maxBytes).toBe(32768);
     expect(policy.fallback.allowWorker).toBe(false);
   });
 
@@ -52,16 +82,28 @@ describe("resolveIsolatePolicy", () => {
     expect(policy.isolate.harden).toBe(false);
     expect(policy.isolate.memoryLimit).toBe(512);
     expect(policy.run.timeout).toBe(30000);
+    expect(policy.recipe.run.maxResultBytes).toBe(1048576);
+    expect(policy.recipe.broker.defaultConcurrency).toBe(64);
     expect(policy.console.capture).toBe("drop");
   });
 
   test("overrides return a copy without mutating future resolutions", () => {
     const custom = resolveIsolatePolicy("ai-tool", {
       allowWorkerFallback: true,
+      auditMaxEvents: 12,
       backend: "auto",
+      brokerDefaultConcurrency: 3,
+      brokerDefaultMaxOutputBytes: 4096,
+      brokerDefaultTimeoutMs: 75,
       captureConsole: false,
       harden: false,
+      maxConsoleBytes: 2048,
+      maxConsoleEntries: 5,
+      maxResultBytes: 8192,
       memoryLimit: 64,
+      poolIdleMs: 1000,
+      poolMaxSize: 2,
+      poolRecycleAfter: 9,
       timeout: 250,
     });
 
@@ -71,6 +113,17 @@ describe("resolveIsolatePolicy", () => {
       memoryLimit: 64,
     });
     expect(custom.run.timeout).toBe(250);
+    expect(custom.recipe).toEqual({
+      audit: { maxEvents: 12 },
+      broker: {
+        defaultConcurrency: 3,
+        defaultMaxOutputBytes: 4096,
+        defaultTimeoutMs: 75,
+      },
+      console: { maxBytes: 2048, maxEntries: 5 },
+      pool: { idleMs: 1000, maxSize: 2, recycleAfter: 9 },
+      run: { maxResultBytes: 8192, timeout: 250 },
+    });
     expect(custom.console.capture).toBe("drop");
     expect(custom.fallback.allowWorker).toBe(true);
 
@@ -79,6 +132,14 @@ describe("resolveIsolatePolicy", () => {
     expect(fresh.isolate.harden).toBe(true);
     expect(fresh.isolate.memoryLimit).toBe(128);
     expect(fresh.run.timeout).toBe(1000);
+    expect(fresh.recipe.run).toEqual({
+      maxResultBytes: 65536,
+      timeout: 1000,
+    });
+    expect(fresh.recipe.audit.maxEvents).toBe(100);
+    expect(fresh.recipe.broker.defaultConcurrency).toBe(8);
+    expect(fresh.recipe.console.maxEntries).toBe(32);
+    expect(fresh.recipe.pool.maxSize).toBe(64);
     expect(fresh.console.capture).toBe("host");
     expect(fresh.fallback.allowWorker).toBe(false);
   });
@@ -114,6 +175,23 @@ describe("createIsolate policy", () => {
     expect(err).toBeInstanceOf(TimeoutError);
     expect((err as TimeoutError).timeoutMs).toBe(50);
     expect(isolate.isDisposed).toBe(true);
+  });
+
+  test("uses policy recipe max result bytes as the per-isolate default", async () => {
+    const policy = resolveIsolatePolicy("trusted", {
+      maxResultBytes: 8,
+      memoryLimit: 256,
+    });
+    const isolate = await createIsolate({ backend: "worker", policy });
+    const context = await isolate.createContext();
+    const script = await isolate.compileScript(`"this result is too large"`);
+
+    const err = await rejection(script.run(context));
+
+    expect(err).toBeInstanceOf(ResultSizeError);
+    expect((err as ResultSizeError).maxResultBytes).toBe(8);
+    expect(isolate.defaultRunOptions.maxResultBytes).toBe(8);
+    await isolate.dispose();
   });
 
   test("preserves explicit console limits when applying policy defaults", async () => {

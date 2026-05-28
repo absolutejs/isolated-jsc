@@ -110,7 +110,8 @@ type IsolateFfiState = {
   nextCallableId: number;
   disposed: boolean;
   options: Required<Pick<IsolateOptions, "memoryLimit">>;
-  defaultRunOptions: Required<Pick<RunOptions, "timeout">>;
+  defaultRunOptions: Required<Pick<RunOptions, "timeout">> &
+    Pick<RunOptions, "maxResultBytes">;
   policy: ResolvedIsolatePolicy | undefined;
   memoryLimitBytes: number;
   /** Set the watchdog observed before terminating; surfaced as the
@@ -445,6 +446,7 @@ export const createIsolateFfi = async (
     disposed: false,
     options: { memoryLimit },
     defaultRunOptions: {
+      maxResultBytes: effectiveOptions.defaultRunOptions?.maxResultBytes,
       timeout: effectiveOptions.defaultRunOptions?.timeout ?? 1000,
     },
     policy: effectiveOptions.policy,
@@ -863,16 +865,20 @@ const makeFfiCallable = (
   const callable: Callable = {
     context,
     async call(args: unknown[], options: RunOptions = {}): Promise<unknown> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const { value } = await runRaw(args, options);
-      enforceResultSize(value, options.maxResultBytes);
+      enforceResultSize(value, maxResultBytes);
       return value;
     },
     async callWithMetrics(
       args: unknown[],
       options: RunOptions = {},
     ): Promise<RunWithMetricsResult> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const { value, cpuMs, heapBytes } = await runRaw(args, options);
-      enforceResultSize(value, options.maxResultBytes);
+      enforceResultSize(value, maxResultBytes);
       return {
         metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
         result: value,
@@ -1272,8 +1278,10 @@ const makeFfiScript = (
     isolate,
 
     async run(context: Context, options: RunOptions = {}): Promise<unknown> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const { value } = await runRaw(context, options);
-      enforceResultSize(value, options.maxResultBytes);
+      enforceResultSize(value, maxResultBytes);
       if (options.release === true) await script.dispose();
       return value;
     },
@@ -1282,8 +1290,10 @@ const makeFfiScript = (
       context: Context,
       options: RunOptions = {},
     ): Promise<RunWithMetricsResult> {
+      const maxResultBytes =
+        options.maxResultBytes ?? state.defaultRunOptions.maxResultBytes;
       const { value, cpuMs, heapBytes } = await runRaw(context, options);
-      enforceResultSize(value, options.maxResultBytes);
+      enforceResultSize(value, maxResultBytes);
       if (options.release === true) await script.dispose();
       return {
         result: value,

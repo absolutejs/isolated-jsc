@@ -11,6 +11,7 @@ export type ResolvedIsolatePolicy = {
   description: string;
   isolate: Pick<IsolateOptions, "backend" | "harden" | "memoryLimit">;
   run: Required<Pick<RunOptions, "timeout">>;
+  recipe: IsolatePolicyRecipe;
   console: {
     capture: "drop" | "host";
   };
@@ -20,12 +21,43 @@ export type ResolvedIsolatePolicy = {
   };
 };
 
+export type IsolatePolicyRecipe = {
+  audit: {
+    maxEvents: number;
+  };
+  broker: {
+    defaultConcurrency: number;
+    defaultMaxOutputBytes: number;
+    defaultTimeoutMs: number;
+  };
+  console: {
+    maxBytes: number;
+    maxEntries: number;
+  };
+  pool: {
+    idleMs: number;
+    maxSize: number;
+    recycleAfter: number;
+  };
+  run: Required<Pick<RunOptions, "maxResultBytes" | "timeout">>;
+};
+
 export type ResolveIsolatePolicyOverrides = {
   backend?: IsolateOptions["backend"];
   harden?: IsolateOptions["harden"];
   memoryLimit?: IsolateOptions["memoryLimit"];
   timeout?: RunOptions["timeout"];
+  maxResultBytes?: RunOptions["maxResultBytes"];
+  auditMaxEvents?: number;
+  brokerDefaultConcurrency?: number;
+  brokerDefaultMaxOutputBytes?: number;
+  brokerDefaultTimeoutMs?: number;
   captureConsole?: boolean;
+  maxConsoleBytes?: number;
+  maxConsoleEntries?: number;
+  poolIdleMs?: number;
+  poolMaxSize?: number;
+  poolRecycleAfter?: number;
   allowWorkerFallback?: boolean;
 };
 
@@ -45,6 +77,17 @@ const policyDefaults = {
     },
     isolate: { backend: "ffi", harden: true, memoryLimit: 128 },
     name: "ai-tool",
+    recipe: {
+      audit: { maxEvents: 100 },
+      broker: {
+        defaultConcurrency: 8,
+        defaultMaxOutputBytes: 64 * 1024,
+        defaultTimeoutMs: 250,
+      },
+      console: { maxBytes: 16 * 1024, maxEntries: 32 },
+      pool: { idleMs: 60_000, maxSize: 64, recycleAfter: 1_000 },
+      run: { maxResultBytes: 64 * 1024, timeout: 1000 },
+    },
     run: { timeout: 1000 },
   },
   "tenant-script": {
@@ -58,6 +101,17 @@ const policyDefaults = {
     },
     isolate: { backend: "auto", harden: true, memoryLimit: 256 },
     name: "tenant-script",
+    recipe: {
+      audit: { maxEvents: 200 },
+      broker: {
+        defaultConcurrency: 16,
+        defaultMaxOutputBytes: 128 * 1024,
+        defaultTimeoutMs: 500,
+      },
+      console: { maxBytes: 64 * 1024, maxEntries: 64 },
+      pool: { idleMs: 120_000, maxSize: 128, recycleAfter: 2_000 },
+      run: { maxResultBytes: 256 * 1024, timeout: 5000 },
+    },
     run: { timeout: 5000 },
   },
   plugin: {
@@ -71,6 +125,17 @@ const policyDefaults = {
     },
     isolate: { backend: "ffi", harden: true, memoryLimit: 192 },
     name: "plugin",
+    recipe: {
+      audit: { maxEvents: 200 },
+      broker: {
+        defaultConcurrency: 4,
+        defaultMaxOutputBytes: 64 * 1024,
+        defaultTimeoutMs: 500,
+      },
+      console: { maxBytes: 32 * 1024, maxEntries: 64 },
+      pool: { idleMs: 60_000, maxSize: 64, recycleAfter: 1_000 },
+      run: { maxResultBytes: 128 * 1024, timeout: 2000 },
+    },
     run: { timeout: 2000 },
   },
   trusted: {
@@ -84,6 +149,17 @@ const policyDefaults = {
     },
     isolate: { backend: "auto", harden: false, memoryLimit: 512 },
     name: "trusted",
+    recipe: {
+      audit: { maxEvents: 100 },
+      broker: {
+        defaultConcurrency: 64,
+        defaultMaxOutputBytes: 512 * 1024,
+        defaultTimeoutMs: 5_000,
+      },
+      console: { maxBytes: 128 * 1024, maxEntries: 128 },
+      pool: { idleMs: 300_000, maxSize: 256, recycleAfter: 5_000 },
+      run: { maxResultBytes: 1024 * 1024, timeout: 30000 },
+    },
     run: { timeout: 30000 },
   },
 } as const satisfies Record<IsolatePolicyName, ResolvedIsolatePolicy>;
@@ -94,6 +170,13 @@ const clonePolicy = (policy: ResolvedIsolatePolicy): ResolvedIsolatePolicy => ({
   fallback: { ...policy.fallback },
   isolate: { ...policy.isolate },
   name: policy.name,
+  recipe: {
+    audit: { ...policy.recipe.audit },
+    broker: { ...policy.recipe.broker },
+    console: { ...policy.recipe.console },
+    pool: { ...policy.recipe.pool },
+    run: { ...policy.recipe.run },
+  },
   run: { ...policy.run },
 });
 
@@ -116,9 +199,43 @@ export const resolveIsolatePolicy = (
   if (overrides.memoryLimit !== undefined) {
     base.isolate.memoryLimit = overrides.memoryLimit;
   }
-  if (overrides.timeout !== undefined) base.run.timeout = overrides.timeout;
+  if (overrides.timeout !== undefined) {
+    base.run.timeout = overrides.timeout;
+    base.recipe.run.timeout = overrides.timeout;
+  }
+  if (overrides.maxResultBytes !== undefined) {
+    base.recipe.run.maxResultBytes = overrides.maxResultBytes;
+  }
+  if (overrides.auditMaxEvents !== undefined) {
+    base.recipe.audit.maxEvents = overrides.auditMaxEvents;
+  }
+  if (overrides.brokerDefaultConcurrency !== undefined) {
+    base.recipe.broker.defaultConcurrency = overrides.brokerDefaultConcurrency;
+  }
+  if (overrides.brokerDefaultMaxOutputBytes !== undefined) {
+    base.recipe.broker.defaultMaxOutputBytes =
+      overrides.brokerDefaultMaxOutputBytes;
+  }
+  if (overrides.brokerDefaultTimeoutMs !== undefined) {
+    base.recipe.broker.defaultTimeoutMs = overrides.brokerDefaultTimeoutMs;
+  }
   if (overrides.captureConsole !== undefined) {
     base.console.capture = overrides.captureConsole ? "host" : "drop";
+  }
+  if (overrides.maxConsoleBytes !== undefined) {
+    base.recipe.console.maxBytes = overrides.maxConsoleBytes;
+  }
+  if (overrides.maxConsoleEntries !== undefined) {
+    base.recipe.console.maxEntries = overrides.maxConsoleEntries;
+  }
+  if (overrides.poolIdleMs !== undefined) {
+    base.recipe.pool.idleMs = overrides.poolIdleMs;
+  }
+  if (overrides.poolMaxSize !== undefined) {
+    base.recipe.pool.maxSize = overrides.poolMaxSize;
+  }
+  if (overrides.poolRecycleAfter !== undefined) {
+    base.recipe.pool.recycleAfter = overrides.poolRecycleAfter;
   }
   if (overrides.allowWorkerFallback !== undefined) {
     base.fallback.allowWorker = overrides.allowWorkerFallback;
@@ -145,7 +262,7 @@ export const applyIsolatePolicyOptions = (
       : clonePolicy(policy);
   const applied: PolicyAppliedIsolateOptions = {
     defaultRunOptions: {
-      ...resolved.run,
+      ...resolved.recipe.run,
       ...defaultRunOptions,
     },
     policy: resolved,

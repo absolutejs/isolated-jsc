@@ -43,6 +43,7 @@ export {
 } from "./typescript";
 export { resolveIsolatePolicy } from "./policy";
 export type {
+  IsolatePolicyRecipe,
   IsolatePolicyName,
   ResolvedIsolatePolicy,
   ResolveIsolatePolicyOverrides,

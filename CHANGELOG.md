@@ -2,6 +2,13 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.15 - 2026-05-28
+
+### Added
+
+- Added packaged policy recipes to resolved policies, covering recommended result limits, console limits, audit buffer caps, capability broker caps, and runner pool settings for `ai-tool`, `tenant-script`, `plugin`, and `trusted`.
+- Policy-created isolates now inherit the recipe `maxResultBytes` as a default run option, while per-call `maxResultBytes` overrides still win.
+
 ## 0.8.14 - 2026-05-28
 
 ### Changed
