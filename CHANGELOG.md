@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.13 - 2026-05-28
+
+### Added
+
+- Added contract tests for `schemaVersion: 1` capability manifest entries and execution receipts so future audit-surface shape changes are intentional.
+
 ## 0.8.12 - 2026-05-28
 
 ### Added
