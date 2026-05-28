@@ -41,10 +41,19 @@ export {
   compileTypeScriptCallable,
   transpileTypeScript,
 } from "./typescript";
-export { resolveIsolatePolicy } from "./policy";
+export {
+  policyAuditOptions,
+  policyBrokerOptions,
+  policyConsoleOptions,
+  policyRunOptions,
+  policyRunnerOptions,
+  resolveIsolatePolicy,
+} from "./policy";
 export type {
   IsolatePolicyRecipe,
   IsolatePolicyName,
+  PolicyBrokerRecipeOptions,
+  PolicyRunnerRecipeOptions,
   ResolvedIsolatePolicy,
   ResolveIsolatePolicyOverrides,
 } from "./policy";

@@ -1,3 +1,8 @@
+import type {
+  CapabilityAuditBufferOptions,
+  CapabilityBrokerOptions,
+} from "./capabilities";
+import type { CreateIsolatedRunnerOptions } from "./run";
 import type { IsolateOptions, RunOptions } from "./types";
 
 export type IsolatePolicyName =
@@ -64,6 +69,21 @@ export type ResolveIsolatePolicyOverrides = {
 export type PolicyAppliedIsolateOptions = Omit<IsolateOptions, "policy"> & {
   policy?: ResolvedIsolatePolicy;
 };
+
+type PolicyOrRecipe = ResolvedIsolatePolicy | IsolatePolicyRecipe;
+
+export type PolicyBrokerRecipeOptions = Pick<
+  CapabilityBrokerOptions<unknown>,
+  "defaultConcurrency" | "defaultMaxOutputBytes" | "defaultTimeoutMs"
+>;
+
+export type PolicyRunnerRecipeOptions = Pick<
+  CreateIsolatedRunnerOptions,
+  "pool" | "run"
+>;
+
+const recipeOf = (policy: PolicyOrRecipe): IsolatePolicyRecipe =>
+  "recipe" in policy ? policy.recipe : policy;
 
 const policyDefaults = {
   "ai-tool": {
@@ -242,6 +262,48 @@ export const resolveIsolatePolicy = (
   }
 
   return base;
+};
+
+export const policyAuditOptions = (
+  policy: PolicyOrRecipe,
+): CapabilityAuditBufferOptions => ({
+  maxEvents: recipeOf(policy).audit.maxEvents,
+});
+
+export const policyBrokerOptions = (
+  policy: PolicyOrRecipe,
+): PolicyBrokerRecipeOptions => {
+  const recipe = recipeOf(policy);
+  return { ...recipe.broker };
+};
+
+export const policyConsoleOptions = (
+  policy: PolicyOrRecipe,
+): Pick<IsolateOptions, "maxConsoleBytes" | "maxConsoleEntries"> => {
+  const recipe = recipeOf(policy);
+  return {
+    maxConsoleBytes: recipe.console.maxBytes,
+    maxConsoleEntries: recipe.console.maxEntries,
+  };
+};
+
+export const policyRunOptions = (
+  policy: PolicyOrRecipe,
+): Required<Pick<RunOptions, "maxResultBytes" | "timeout">> => ({
+  ...recipeOf(policy).run,
+});
+
+export const policyRunnerOptions = (
+  policy: PolicyOrRecipe,
+): PolicyRunnerRecipeOptions => {
+  const recipe = recipeOf(policy);
+  return {
+    pool: { ...recipe.pool },
+    run: {
+      maxResultBytes: recipe.run.maxResultBytes,
+      timeout: recipe.run.timeout,
+    },
+  };
 };
 
 export const applyIsolatePolicyOptions = (

@@ -41,7 +41,7 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.8.15)
+## What ships today (v0.8.16)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
@@ -70,7 +70,7 @@ The two share every public type. Pick explicitly with `createIsolate({ backend: 
 - **Result size limits.** Pass `maxResultBytes` in run options to reject oversized successful outputs with `ResultSizeError` before application code accepts them.
 - **Console output limits.** Pass `maxConsoleEntries` / `maxConsoleBytes` when creating an isolate to drop excess captured console events and surface overflow flags in receipts.
 - **Backend observability.** `isolate.backend` reports the resolved backend (`"ffi"` or `"worker"`), `runWithMetrics()` / `callWithMetrics()` include `metrics.backend`, and `isolated-jsc doctor --json` emits machine-readable backend probe details.
-- **Policy recipes.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults. `resolveIsolatePolicy(name, overrides?)` returns the same policy object plus a `recipe` with recommended result limits, console limits, audit buffer caps, broker caps, and runner pool settings.
+- **Policy recipes.** `createIsolate({ policy: "ai-tool" | "tenant-script" | "plugin" | "trusted" })` applies standardized isolate/run defaults. `resolveIsolatePolicy(name, overrides?)` returns the same policy object plus a `recipe` with recommended result limits, console limits, audit buffer caps, broker caps, and runner pool settings. Helper builders such as `policyAuditOptions(policy)`, `policyBrokerOptions(policy)`, `policyConsoleOptions(policy)`, `policyRunOptions(policy)`, and `policyRunnerOptions(policy)` turn those recommendations into copy-safe options for the surrounding APIs.
 - **One-shot execution.** `runIsolated(source, { policy, globals, context, run, withMetrics })` covers request/response paths that do not need to manage isolate lifecycle directly.
 - **Reusable runners.** `createIsolatedRunner({ policy, globals, pool })` reuses isolates by key for hot tenant/session/conversation paths. Use `runner.run()` for fresh-context source execution, `runner.precompile()` to warm callables, `runner.call()` to compile once per key/name and call repeatedly, and `runner.stats()` to inspect pool/cache size.
 
@@ -125,6 +125,10 @@ import {
   compileTypeScriptCallable,
   createIsolate,
   createIsolatedRunner,
+  policyAuditOptions,
+  policyBrokerOptions,
+  policyConsoleOptions,
+  policyRunnerOptions,
   resolveIsolatePolicy,
   runIsolated,
   Reference,
@@ -183,7 +187,7 @@ const policy = resolveIsolatePolicy("ai-tool", {
   timeout: 750,
 });
 const audit = createCapabilityAuditBuffer<TenantContext>({
-  maxEvents: policy.recipe.audit.maxEvents,
+  ...policyAuditOptions(policy),
 });
 const redactEmail = (email: string) => {
   const [name, domain] = email.split("@");
@@ -252,9 +256,7 @@ const broker = createCapabilityBroker(
   },
   {
     context: { id: "tenant_123" },
-    defaultConcurrency: policy.recipe.broker.defaultConcurrency,
-    defaultMaxOutputBytes: policy.recipe.broker.defaultMaxOutputBytes,
-    defaultTimeoutMs: policy.recipe.broker.defaultTimeoutMs,
+    ...policyBrokerOptions(policy),
     onAudit: audit.onAudit,
     redactAuditInput: () => "[input redacted by default]",
     redactAuditOutput: () => "[output redacted by default]",
@@ -295,8 +297,7 @@ await context.setGlobal("tools", broker.reference);
 // result-size limits, and recommended audit/broker/runner settings.
 const policyIsolate = await createIsolate({
   policy,
-  maxConsoleBytes: policy.recipe.console.maxBytes,
-  maxConsoleEntries: policy.recipe.console.maxEntries,
+  ...policyConsoleOptions(policy),
 });
 const policyContext = await policyIsolate.createContext();
 const policyScript = await policyIsolate.compileScript("1 + 1");
@@ -334,10 +335,9 @@ const receipted = await runIsolated<number>("input.n + 1", {
 
 // Reusable runner for repeated request/response paths.
 const runner = createIsolatedRunner({
+  ...policyRunnerOptions(policy),
   policy,
   globals: { tools: broker.reference },
-  pool: policy.recipe.pool,
-  run: { maxResultBytes: policy.recipe.run.maxResultBytes },
 });
 
 const tenantResult = await runner.run<number>("input.n * 2", {

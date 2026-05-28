@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.16 - 2026-05-28
+
+### Added
+
+- Added policy recipe helper builders: `policyAuditOptions()`, `policyBrokerOptions()`, `policyConsoleOptions()`, `policyRunOptions()`, and `policyRunnerOptions()` return copy-safe option objects for wiring recipes into audit buffers, capability brokers, isolates, one-shot runs, and runners.
+
 ## 0.8.15 - 2026-05-28
 
 ### Added

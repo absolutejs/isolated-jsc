@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   createIsolate,
+  policyAuditOptions,
+  policyBrokerOptions,
+  policyConsoleOptions,
+  policyRunOptions,
+  policyRunnerOptions,
   resolveIsolatePolicy,
   ResultSizeError,
   TimeoutError,
@@ -142,6 +147,61 @@ describe("resolveIsolatePolicy", () => {
     expect(fresh.recipe.pool.maxSize).toBe(64);
     expect(fresh.console.capture).toBe("host");
     expect(fresh.fallback.allowWorker).toBe(false);
+  });
+
+  test("helper builders expose recipe options without sharing mutable state", () => {
+    const policy = resolveIsolatePolicy("ai-tool", {
+      auditMaxEvents: 12,
+      brokerDefaultConcurrency: 3,
+      brokerDefaultMaxOutputBytes: 4096,
+      brokerDefaultTimeoutMs: 75,
+      maxConsoleBytes: 2048,
+      maxConsoleEntries: 5,
+      maxResultBytes: 8192,
+      poolIdleMs: 1000,
+      poolMaxSize: 2,
+      poolRecycleAfter: 9,
+      timeout: 250,
+    });
+
+    const audit = policyAuditOptions(policy);
+    const broker = policyBrokerOptions(policy);
+    const consoleOptions = policyConsoleOptions(policy);
+    const run = policyRunOptions(policy);
+    const runner = policyRunnerOptions(policy);
+
+    expect(audit).toEqual({ maxEvents: 12 });
+    expect(broker).toEqual({
+      defaultConcurrency: 3,
+      defaultMaxOutputBytes: 4096,
+      defaultTimeoutMs: 75,
+    });
+    expect(consoleOptions).toEqual({
+      maxConsoleBytes: 2048,
+      maxConsoleEntries: 5,
+    });
+    expect(run).toEqual({ maxResultBytes: 8192, timeout: 250 });
+    expect(runner).toEqual({
+      pool: { idleMs: 1000, maxSize: 2, recycleAfter: 9 },
+      run: { maxResultBytes: 8192, timeout: 250 },
+    });
+
+    runner.pool!.maxSize = 99;
+    runner.run!.maxResultBytes = 99;
+
+    expect(policy.recipe.pool.maxSize).toBe(2);
+    expect(policy.recipe.run.maxResultBytes).toBe(8192);
+  });
+
+  test("helper builders accept a recipe object directly", () => {
+    const policy = resolveIsolatePolicy("plugin");
+
+    expect(policyAuditOptions(policy.recipe)).toEqual({ maxEvents: 200 });
+    expect(policyRunnerOptions(policy.recipe).pool).toEqual({
+      idleMs: 60000,
+      maxSize: 64,
+      recycleAfter: 1000,
+    });
   });
 });
 
