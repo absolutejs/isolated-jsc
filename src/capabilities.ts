@@ -19,13 +19,44 @@ export type CapabilityAuditEvent<TContext = unknown> = {
 
 export type CapabilityValidator<T> = (value: unknown) => T;
 
+export type CapabilityRisk =
+  | "read-only"
+  | "read-write"
+  | "network"
+  | "filesystem"
+  | "exec"
+  | "unknown";
+
+export type CapabilitySchemaDescriptor =
+  | string
+  | {
+      description?: string;
+      name?: string;
+    };
+
+export type CapabilityManifestEntry = {
+  concurrency?: number;
+  description?: string;
+  hasInputValidator: boolean;
+  hasOutputValidator: boolean;
+  input?: CapabilitySchemaDescriptor;
+  name: string;
+  output?: CapabilitySchemaDescriptor;
+  risk: CapabilityRisk;
+  timeoutMs?: number;
+};
+
 export type CapabilityTool<
   TInput = unknown,
   TOutput = unknown,
   TContext = unknown,
 > = {
   concurrency?: number;
+  description?: string;
   handler: (input: TInput, context: TContext) => TOutput | Promise<TOutput>;
+  input?: CapabilitySchemaDescriptor;
+  output?: CapabilitySchemaDescriptor;
+  risk?: CapabilityRisk;
   validateInput?: CapabilityValidator<TInput>;
   validateOutput?: CapabilityValidator<TOutput>;
   timeoutMs?: number;
@@ -66,6 +97,7 @@ export type CapabilityBrokerFor<
   TTools extends Record<string, AnyCapabilityTool<any>>,
 > = {
   call: CapabilityBrokerCall<TTools>;
+  manifest: () => CapabilityManifestEntry[];
   reference: Reference<(tool: unknown, input?: unknown) => Promise<unknown>>;
 };
 
@@ -102,6 +134,7 @@ export type CapabilityBrokerOptions<TContext = unknown> = {
 
 export type CapabilityBroker = {
   call: (tool: string, input?: unknown) => Promise<unknown>;
+  manifest: () => CapabilityManifestEntry[];
   reference: Reference<(tool: unknown, input?: unknown) => Promise<unknown>>;
 };
 
@@ -140,6 +173,22 @@ export const createCapabilityBroker = <
   options: CapabilityBrokerOptions<TContext>,
 ): CapabilityBrokerFor<TTools> => {
   const active = new Map<string, number>();
+
+  const manifest = (): CapabilityManifestEntry[] =>
+    Object.entries(tools).map(([name, tool]) => {
+      const entry: CapabilityManifestEntry = {
+        hasInputValidator: tool.validateInput !== undefined,
+        hasOutputValidator: tool.validateOutput !== undefined,
+        name,
+        risk: tool.risk ?? "unknown",
+      };
+      if (tool.concurrency !== undefined) entry.concurrency = tool.concurrency;
+      if (tool.description !== undefined) entry.description = tool.description;
+      if (tool.input !== undefined) entry.input = tool.input;
+      if (tool.output !== undefined) entry.output = tool.output;
+      if (tool.timeoutMs !== undefined) entry.timeoutMs = tool.timeoutMs;
+      return entry;
+    });
 
   const audit = (event: CapabilityAuditEvent<TContext>): void => {
     options.onAudit?.(event);
@@ -232,6 +281,7 @@ export const createCapabilityBroker = <
 
   return {
     call: call as CapabilityBrokerFor<TTools>["call"],
+    manifest,
     reference: new Reference((tool, input) => call(String(tool), input)),
   };
 };

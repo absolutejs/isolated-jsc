@@ -81,6 +81,58 @@ describe("createCapabilityBroker", () => {
     expect((error as CapabilityError).code).toBe("CAPABILITY_NOT_FOUND");
   });
 
+  test("exposes a serializable manifest for reviewable host powers", () => {
+    const broker = createCapabilityBroker(
+      {
+        lookupOrder: defineCapabilityTool<
+          { id: string },
+          { id: string; status: string } | null,
+          { tenantId: string }
+        >({
+          concurrency: 2,
+          description: "Read one order by id for the current tenant",
+          input: { name: "LookupOrderInput" },
+          output: "Order | null",
+          risk: "read-only",
+          timeoutMs: 250,
+          validateInput: (input) => {
+            const object = asObject(input);
+            return { id: String(object.id) };
+          },
+          validateOutput: (output) => output as { id: string; status: string },
+          handler: ({ id }) => ({ id, status: "paid" }),
+        }),
+        writeAudit: {
+          handler: () => "ok",
+        },
+      },
+      { context: { tenantId: "tenant-a" } },
+    );
+
+    expect(broker.manifest()).toEqual([
+      {
+        concurrency: 2,
+        description: "Read one order by id for the current tenant",
+        hasInputValidator: true,
+        hasOutputValidator: true,
+        input: { name: "LookupOrderInput" },
+        name: "lookupOrder",
+        output: "Order | null",
+        risk: "read-only",
+        timeoutMs: 250,
+      },
+      {
+        hasInputValidator: false,
+        hasOutputValidator: false,
+        name: "writeAudit",
+        risk: "unknown",
+      },
+    ]);
+    expect(JSON.parse(JSON.stringify(broker.manifest()))).toEqual(
+      broker.manifest(),
+    );
+  });
+
   test("enforces per-tool timeout", async () => {
     const audit: CapabilityAuditEvent[] = [];
     const broker = createCapabilityBroker(

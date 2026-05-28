@@ -260,9 +260,9 @@ Why now:
 
 ### P3: Capability productization
 
-1. Add optional tool metadata.
-2. Add `broker.manifest()`.
-3. Add manifest example and docs.
+1. Add optional tool metadata. **Done in 0.8.1.**
+2. Add `broker.manifest()`. **Done in 0.8.1.**
+3. Add manifest example and docs. **Done in 0.8.1.**
 
 Why now:
 

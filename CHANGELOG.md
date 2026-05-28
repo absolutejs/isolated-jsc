@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.1 - 2026-05-28
+
+### Added
+
+- Added capability manifests: `defineCapabilityTool()` now accepts optional review metadata and `broker.manifest()` returns a serializable list of declared host powers for audits, docs, and agent/tool UIs.
+
 ## 0.8.0 - 2026-05-28
 
 ### Added

@@ -172,6 +172,10 @@ const broker = createCapabilityBroker(
       Order | null,
       TenantContext
     >({
+      description: "Read one order by id for the current tenant",
+      risk: "read-only",
+      input: { name: "LookupOrderInput" },
+      output: "Order | null",
       timeoutMs: 250,
       validateInput: (input) => {
         if (input === null || typeof input !== "object") {
@@ -192,6 +196,19 @@ const broker = createCapabilityBroker(
 // Host-side direct calls are typed from the tool map.
 const order = await broker.call("lookupOrder", { id: "ord_123" });
 //    ^? Order | null
+
+// Reviewable capability manifest for docs, audits, and agent/tool UIs.
+broker.manifest();
+// [{
+//   name: "lookupOrder",
+//   description: "Read one order by id for the current tenant",
+//   risk: "read-only",
+//   input: { name: "LookupOrderInput" },
+//   output: "Order | null",
+//   timeoutMs: 250,
+//   hasInputValidator: true,
+//   hasOutputValidator: false
+// }]
 
 // Sandbox calls still use an untrusted-code-safe Reference.
 await context.setGlobal("tools", broker.reference);
