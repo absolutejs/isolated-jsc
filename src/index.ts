@@ -7,7 +7,7 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
-export { createIsolatedRunner, runIsolated } from "./run";
+export { createIsolatedRunner, runIsolated, runIsolatedFile } from "./run";
 export {
   CapabilityError,
   createCapabilityAuditBuffer,
@@ -37,8 +37,13 @@ export type {
 export { JscLibraryNotFoundError, resolveJscLibrary } from "./ffi/resolver";
 export type { JscFlavor, JscLibraryProbe } from "./ffi/resolver";
 export {
+  compileTypeScriptCallableFile,
+  compileTypeScriptFile,
   compileTypeScript,
   compileTypeScriptCallable,
+  readSourceFile,
+  transpileSourceFile,
+  transpileSourceFileCallable,
   transpileTypeScript,
 } from "./typescript";
 export {
@@ -58,6 +63,8 @@ export type {
   ResolveIsolatePolicyOverrides,
 } from "./policy";
 export type {
+  SourceFileLoader,
+  SourceFileOptions,
   TranspileTypeScriptOptions,
   TypeScriptLoader,
 } from "./typescript";
@@ -95,13 +102,19 @@ export type {
   CreateIsolatedRunnerOptions,
   IsolatedRunner,
   IsolatedRunnerCallOptions,
+  IsolatedRunnerCallFileOptions,
   IsolatedRunnerCallWithMetricsOptions,
   IsolatedRunnerCallWithReceiptOptions,
+  IsolatedRunnerPrecompileFileOptions,
   IsolatedRunnerPrecompileOptions,
+  IsolatedRunnerRunFileOptions,
   IsolatedRunnerRunOptions,
   IsolatedRunnerRunWithMetricsOptions,
   IsolatedRunnerRunWithReceiptOptions,
   IsolatedRunnerStats,
+  RunIsolatedFileOptions,
+  RunIsolatedFileWithMetricsOptions,
+  RunIsolatedFileWithReceiptOptions,
   RunIsolatedOptions,
   RunIsolatedWithMetricsOptions,
   RunIsolatedWithReceiptOptions,

@@ -1,5 +1,10 @@
 import { createIsolate } from "./isolate";
 import { createIsolatePool, type IsolatePoolOptions } from "./pool";
+import {
+  compileTypeScriptFile,
+  transpileSourceFileCallable,
+  type SourceFileOptions,
+} from "./typescript";
 import type {
   Callable,
   Context,
@@ -45,6 +50,22 @@ export type RunIsolatedWithReceiptOptions = RunIsolatedOptions & {
   withReceipt: true;
 };
 
+export type RunIsolatedFileOptions = RunIsolatedOptions & {
+  /**
+   * Source-file loader/target options. The loader is inferred from the file
+   * extension unless supplied.
+   */
+  source?: SourceFileOptions;
+};
+
+export type RunIsolatedFileWithMetricsOptions = RunIsolatedFileOptions & {
+  withMetrics: true;
+};
+
+export type RunIsolatedFileWithReceiptOptions = RunIsolatedFileOptions & {
+  withReceipt: true;
+};
+
 export type CreateIsolatedRunnerOptions = IsolateOptions & {
   /**
    * Pool controls for the reusable runner. `isolate` is derived from the
@@ -78,6 +99,10 @@ export type IsolatedRunnerRunOptions = {
   withReceipt?: boolean;
 };
 
+export type IsolatedRunnerRunFileOptions = IsolatedRunnerRunOptions & {
+  source?: SourceFileOptions;
+};
+
 export type IsolatedRunnerRunWithMetricsOptions = IsolatedRunnerRunOptions & {
   withMetrics: true;
 };
@@ -106,6 +131,10 @@ export type IsolatedRunnerCallOptions = {
   withReceipt?: boolean;
 };
 
+export type IsolatedRunnerCallFileOptions = IsolatedRunnerCallOptions & {
+  source?: SourceFileOptions;
+};
+
 export type IsolatedRunnerCallWithMetricsOptions = IsolatedRunnerCallOptions & {
   withMetrics: true;
 };
@@ -128,6 +157,11 @@ export type IsolatedRunnerPrecompileOptions = {
    */
   globals?: Record<string, unknown>;
 };
+
+export type IsolatedRunnerPrecompileFileOptions =
+  IsolatedRunnerPrecompileOptions & {
+    source?: SourceFileOptions;
+  };
 
 export type IsolatedRunnerStats = {
   /**
@@ -159,6 +193,20 @@ export type IsolatedRunner = {
       options?: IsolatedRunnerRunOptions,
     ): Promise<T>;
   };
+  runFile: {
+    <T = unknown>(
+      filePath: string | URL,
+      options: IsolatedRunnerRunFileOptions & { withReceipt: true },
+    ): Promise<RunWithReceiptResult<T>>;
+    <T = unknown>(
+      filePath: string | URL,
+      options: IsolatedRunnerRunFileOptions & { withMetrics: true },
+    ): Promise<RunWithMetricsResult<T>>;
+    <T = unknown>(
+      filePath: string | URL,
+      options?: IsolatedRunnerRunFileOptions,
+    ): Promise<T>;
+  };
   call: {
     <T = unknown>(
       name: string,
@@ -179,10 +227,35 @@ export type IsolatedRunner = {
       options?: IsolatedRunnerCallOptions,
     ): Promise<T>;
   };
+  callFile: {
+    <T = unknown>(
+      name: string,
+      filePath: string | URL,
+      args: unknown[],
+      options: IsolatedRunnerCallFileOptions & { withReceipt: true },
+    ): Promise<RunWithReceiptResult<T>>;
+    <T = unknown>(
+      name: string,
+      filePath: string | URL,
+      args: unknown[],
+      options: IsolatedRunnerCallFileOptions & { withMetrics: true },
+    ): Promise<RunWithMetricsResult<T>>;
+    <T = unknown>(
+      name: string,
+      filePath: string | URL,
+      args?: unknown[],
+      options?: IsolatedRunnerCallFileOptions,
+    ): Promise<T>;
+  };
   precompile: (
     name: string,
     source: string,
     options?: IsolatedRunnerPrecompileOptions,
+  ) => Promise<void>;
+  precompileFile: (
+    name: string,
+    filePath: string | URL,
+    options?: IsolatedRunnerPrecompileFileOptions,
   ) => Promise<void>;
   stats: () => IsolatedRunnerStats;
   size: () => number;
@@ -232,6 +305,55 @@ export async function runIsolated<T = unknown>(
     }
 
     const script = await isolate.compileScript(source);
+    if (withReceipt === true) {
+      const result = await script.runWithReceipt(context, run);
+      return result as RunWithReceiptResult<T>;
+    }
+    if (withMetrics === true) {
+      const result = await script.runWithMetrics(context, run);
+      return result as RunWithMetricsResult<T>;
+    }
+    return (await script.run(context, run)) as T;
+  } finally {
+    await isolate.dispose();
+  }
+}
+
+export async function runIsolatedFile<T = unknown>(
+  filePath: string | URL,
+  options: RunIsolatedFileWithMetricsOptions,
+): Promise<RunWithMetricsResult<T>>;
+export async function runIsolatedFile<T = unknown>(
+  filePath: string | URL,
+  options: RunIsolatedFileWithReceiptOptions,
+): Promise<RunWithReceiptResult<T>>;
+export async function runIsolatedFile<T = unknown>(
+  filePath: string | URL,
+  options?: RunIsolatedFileOptions,
+): Promise<T>;
+export async function runIsolatedFile<T = unknown>(
+  filePath: string | URL,
+  options: RunIsolatedFileOptions = {},
+): Promise<T | RunWithMetricsResult<T> | RunWithReceiptResult<T>> {
+  const {
+    context: contextOptions,
+    globals,
+    run,
+    source,
+    withMetrics,
+    withReceipt,
+    ...isolateOptions
+  } = options;
+  const isolate = await createIsolate(isolateOptions);
+  try {
+    const context = await isolate.createContext(contextOptions);
+    if (globals !== undefined) {
+      for (const [name, value] of Object.entries(globals)) {
+        await context.setGlobal(name, value);
+      }
+    }
+
+    const script = await compileTypeScriptFile(isolate, filePath, source);
     if (withReceipt === true) {
       const result = await script.runWithReceipt(context, run);
       return result as RunWithReceiptResult<T>;
@@ -361,6 +483,47 @@ export const createIsolatedRunner = (
     });
   };
 
+  const runFile = async <T = unknown>(
+    filePath: string | URL,
+    runOptions: IsolatedRunnerRunFileOptions = {},
+  ): Promise<T | RunWithMetricsResult<T> | RunWithReceiptResult<T>> => {
+    const key = runOptions.key ?? "default";
+    const contextOptions = runOptions.context ?? defaultContext;
+    const globals =
+      defaultGlobals === undefined && runOptions.globals === undefined
+        ? undefined
+        : { ...(defaultGlobals ?? {}), ...(runOptions.globals ?? {}) };
+    const scriptRunOptions =
+      defaultRun === undefined && runOptions.run === undefined
+        ? undefined
+        : { ...(defaultRun ?? {}), ...(runOptions.run ?? {}) };
+
+    return pool.run(key, async (isolate) => {
+      const context = await isolate.createContext(contextOptions);
+      await installGlobals(context, globals);
+
+      const script = await compileTypeScriptFile(
+        isolate,
+        filePath,
+        runOptions.source,
+      );
+      try {
+        if (runOptions.withMetrics === true) {
+          const result = await script.runWithMetrics(context, scriptRunOptions);
+          return result as RunWithMetricsResult<T>;
+        }
+        if (runOptions.withReceipt === true) {
+          const result = await script.runWithReceipt(context, scriptRunOptions);
+          return result as RunWithReceiptResult<T>;
+        }
+        return (await script.run(context, scriptRunOptions)) as T;
+      } finally {
+        await script.dispose();
+        await context.dispose();
+      }
+    });
+  };
+
   const call = async <T = unknown>(
     name: string,
     source: string,
@@ -413,6 +576,19 @@ export const createIsolatedRunner = (
     });
   };
 
+  const callFile = async <T = unknown>(
+    name: string,
+    filePath: string | URL,
+    args: unknown[] = [],
+    callOptions: IsolatedRunnerCallFileOptions = {},
+  ): Promise<T | RunWithMetricsResult<T> | RunWithReceiptResult<T>> => {
+    const source = await transpileSourceFileCallable(
+      filePath,
+      callOptions.source,
+    );
+    return call<T>(name, source, args, callOptions);
+  };
+
   const precompile = async (
     name: string,
     source: string,
@@ -437,10 +613,25 @@ export const createIsolatedRunner = (
     });
   };
 
+  const precompileFile = async (
+    name: string,
+    filePath: string | URL,
+    precompileOptions: IsolatedRunnerPrecompileFileOptions = {},
+  ): Promise<void> => {
+    const source = await transpileSourceFileCallable(
+      filePath,
+      precompileOptions.source,
+    );
+    await precompile(name, source, precompileOptions);
+  };
+
   return {
     run: run as IsolatedRunner["run"],
+    runFile: runFile as IsolatedRunner["runFile"],
     call: call as IsolatedRunner["call"],
+    callFile: callFile as IsolatedRunner["callFile"],
     precompile,
+    precompileFile,
     stats,
     size: () => pool.size(),
     async dispose() {

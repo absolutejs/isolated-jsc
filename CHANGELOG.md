@@ -2,6 +2,13 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.18 - 2026-05-28
+
+### Added
+
+- Added file-based TypeScript/source helpers so scripts and default-export callables can live in real `.ts`, `.tsx`, `.js`, or `.jsx` files instead of string literals: `readSourceFile()`, `transpileSourceFile()`, `compileTypeScriptFile()`, `transpileSourceFileCallable()`, and `compileTypeScriptCallableFile()`.
+- Added `runIsolatedFile()` and runner methods `runFile()`, `precompileFile()`, and `callFile()` for one-shot and pooled file-backed execution.
+
 ## 0.8.17 - 2026-05-28
 
 ### Added

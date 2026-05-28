@@ -1,5 +1,5 @@
 import {
-  compileTypeScriptCallable,
+  compileTypeScriptCallableFile,
   createCapabilityAuditBuffer,
   createCapabilityBroker,
   createIsolate,
@@ -187,23 +187,9 @@ const isolate = await createIsolate({
 
 try {
   const context = await isolate.createContext();
-  const agent = await compileTypeScriptCallable(
+  const agent = await compileTypeScriptCallableFile(
     context,
-    `async (
-      tools: (name: string, input: unknown) => Promise<unknown>,
-      orderId: string,
-    ): Promise<{ charge: unknown; order: unknown; summary: unknown }> => {
-      const order = await tools("lookupOrder", { id: orderId });
-      const charge = await tools("chargeCard", {
-        cardToken: "tok_live_customer_4242",
-        orderId,
-      });
-      const summary = await tools(
-        "summarize",
-        "Customer asked for the current shipping state and total."
-      );
-      return { charge, order, summary };
-    }`,
+    new URL("./agent-callable.ts", import.meta.url),
   );
 
   const { result, metrics } = await agent.callWithMetrics(

@@ -123,6 +123,8 @@ import {
   createCapabilityBroker,
   defineCapabilityTool,
   compileTypeScriptCallable,
+  compileTypeScriptCallableFile,
+  compileTypeScriptFile,
   createIsolate,
   createIsolatedRunner,
   policyAuditOptions,
@@ -131,6 +133,7 @@ import {
   policyRunnerOptions,
   resolveIsolatePolicy,
   runIsolated,
+  runIsolatedFile,
   Reference,
   ExternalCopy,
   type Isolate,
@@ -173,6 +176,27 @@ const handler = await compileTypeScriptCallable(
   "async (name: string): Promise<string> => name.trim().toUpperCase()",
 );
 await handler.call([" alex "]); // "ALEX"
+
+// Real files work too. Keep generics, types, and complex tenant/plugin code in
+// normal `.ts`, `.tsx`, `.js`, or `.jsx` files instead of string literals.
+const typedScript = await compileTypeScriptFile(
+  isolate,
+  "./tenant-code/score.ts",
+);
+await typedScript.run(context);
+
+// Callable files use a default export:
+//
+//   type Box<T> = { value: T };
+//   export default function unwrap<T>(box: Box<T>): T {
+//     return box.value;
+//   }
+//
+const unwrap = await compileTypeScriptCallableFile(
+  context,
+  "./tenant-code/unwrap.ts",
+);
+await unwrap.call([{ value: "typed file" }]); // "typed file"
 
 type TenantContext = { id: string };
 type LookupOrderInput = { id: string };
@@ -311,6 +335,12 @@ const oneShot = await runIsolated<number>("input.n * 2", {
 });
 // oneShot === 42
 
+const oneShotFile = await runIsolatedFile<number>("./tenant-code/score.ts", {
+  policy,
+  globals: { input: { n: 21 } },
+});
+// oneShotFile === 42
+
 const measured = await runIsolated<number>("input.n + 1", {
   policy: "tenant-script",
   globals: { input: { n: 41 } },
@@ -346,6 +376,15 @@ const tenantResult = await runner.run<number>("input.n * 2", {
 });
 // tenantResult === 42
 
+const tenantFileResult = await runner.runFile<number>(
+  "./tenant-code/score.ts",
+  {
+    key: "tenant_123",
+    globals: { input: { n: 21 } },
+  },
+);
+// tenantFileResult === 42
+
 await runner.precompile(
   "scoreFormula",
   "(input) => input.base * 2 + input.bonus",
@@ -359,6 +398,18 @@ const callableResult = await runner.call<number>(
   { key: "tenant_123" },
 );
 // callableResult === 42
+
+await runner.precompileFile("unwrap", "./tenant-code/unwrap.ts", {
+  key: "tenant_123",
+});
+
+const callableFileResult = await runner.callFile<string>(
+  "unwrap",
+  "./tenant-code/unwrap.ts",
+  [{ value: "typed file" }],
+  { key: "tenant_123" },
+);
+// callableFileResult === "typed file"
 // runner.stats() === { poolSize: 1, callableCacheSize: 1, callablesByKey: { tenant_123: 1 } }
 
 await runner.dispose();
