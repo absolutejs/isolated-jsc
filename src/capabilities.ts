@@ -39,8 +39,8 @@ export type CapabilityAuditBuffer<TContext = unknown> = {
   onAudit: (event: CapabilityAuditEvent<TContext>) => void;
   receiptOptions: () => {
     capabilityEvents: readonly CapabilityAuditEvent<TContext>[];
-    capabilityEventsDropped: number;
-    capabilityEventsTruncated: boolean;
+    capabilityEventsDropped: () => number;
+    capabilityEventsTruncated: () => boolean;
   };
   snapshot: () => CapabilityAuditBufferSnapshot<TContext>;
 };
@@ -230,8 +230,8 @@ export const createCapabilityAuditBuffer = <TContext = unknown>(
     },
     receiptOptions: () => ({
       capabilityEvents: events,
-      capabilityEventsDropped: dropped,
-      capabilityEventsTruncated: dropped > 0,
+      capabilityEventsDropped: () => dropped,
+      capabilityEventsTruncated: () => dropped > 0,
     }),
     snapshot,
   };

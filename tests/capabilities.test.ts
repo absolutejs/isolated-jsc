@@ -60,10 +60,9 @@ describe("createCapabilityBroker", () => {
       dropped: 1,
       truncated: true,
     });
-    expect(buffer.receiptOptions()).toMatchObject({
-      capabilityEventsDropped: 1,
-      capabilityEventsTruncated: true,
-    });
+    const receiptOptions = buffer.receiptOptions();
+    expect(receiptOptions.capabilityEventsDropped()).toBe(1);
+    expect(receiptOptions.capabilityEventsTruncated()).toBe(true);
 
     buffer.clear();
     expect(buffer.events).toHaveLength(0);
@@ -81,11 +80,10 @@ describe("createCapabilityBroker", () => {
     });
     expect(buffer.events).toHaveLength(0);
     expect(buffer.dropped).toBe(1);
-    expect(buffer.receiptOptions()).toMatchObject({
-      capabilityEvents: [],
-      capabilityEventsDropped: 1,
-      capabilityEventsTruncated: true,
-    });
+    const receiptOptions = buffer.receiptOptions();
+    expect(receiptOptions.capabilityEvents).toEqual([]);
+    expect(receiptOptions.capabilityEventsDropped()).toBe(1);
+    expect(receiptOptions.capabilityEventsTruncated()).toBe(true);
   });
 
   test("dispatches validated tools through a Reference", async () => {

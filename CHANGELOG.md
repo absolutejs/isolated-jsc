@@ -2,6 +2,12 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.8.8 - 2026-05-28
+
+### Fixed
+
+- Made `createCapabilityAuditBuffer().receiptOptions()` expose lazy dropped/truncated values so receipts observe the final audit count after sandbox execution completes.
+
 ## 0.8.7 - 2026-05-28
 
 ### Added

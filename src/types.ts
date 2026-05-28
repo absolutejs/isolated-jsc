@@ -375,9 +375,9 @@ export type RunReceiptOptions = RunOptions & {
    */
   capabilityEvents?: readonly ExecutionReceiptCapabilityEvent[];
   /** Number of capability audit events dropped before receipt creation. */
-  capabilityEventsDropped?: number;
+  capabilityEventsDropped?: number | (() => number);
   /** Whether capability audit events were truncated before receipt creation. */
-  capabilityEventsTruncated?: boolean;
+  capabilityEventsTruncated?: boolean | (() => boolean);
   /**
    * User/application labels copied into the receipt for review workflows.
    */

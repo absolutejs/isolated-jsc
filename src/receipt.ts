@@ -38,6 +38,9 @@ const capabilityCalls = (
     tool: event.tool,
   }));
 
+const resolveOption = <T>(value: T | (() => T) | undefined): T | undefined =>
+  typeof value === "function" ? (value as () => T)() : value;
+
 export type ReceiptBase = {
   consoleStart?: ConsoleLimitSnapshot;
   consoleEnd?: () => ConsoleLimitSnapshot;
@@ -76,11 +79,17 @@ export const createSuccessReceipt = (
   if (base.isolate.policy?.name !== undefined) {
     receipt.policy = base.isolate.policy.name;
   }
-  if (base.options.capabilityEventsDropped !== undefined) {
-    receipt.capabilityCallsDropped = base.options.capabilityEventsDropped;
+  const capabilityEventsDropped = resolveOption(
+    base.options.capabilityEventsDropped,
+  );
+  if (capabilityEventsDropped !== undefined) {
+    receipt.capabilityCallsDropped = capabilityEventsDropped;
   }
-  if (base.options.capabilityEventsTruncated !== undefined) {
-    receipt.capabilityCallsTruncated = base.options.capabilityEventsTruncated;
+  const capabilityEventsTruncated = resolveOption(
+    base.options.capabilityEventsTruncated,
+  );
+  if (capabilityEventsTruncated !== undefined) {
+    receipt.capabilityCallsTruncated = capabilityEventsTruncated;
   }
   if (base.options.purpose !== undefined)
     receipt.purpose = base.options.purpose;
@@ -114,11 +123,17 @@ export const createErrorReceipt = (
   if (base.isolate.policy?.name !== undefined) {
     receipt.policy = base.isolate.policy.name;
   }
-  if (base.options.capabilityEventsDropped !== undefined) {
-    receipt.capabilityCallsDropped = base.options.capabilityEventsDropped;
+  const capabilityEventsDropped = resolveOption(
+    base.options.capabilityEventsDropped,
+  );
+  if (capabilityEventsDropped !== undefined) {
+    receipt.capabilityCallsDropped = capabilityEventsDropped;
   }
-  if (base.options.capabilityEventsTruncated !== undefined) {
-    receipt.capabilityCallsTruncated = base.options.capabilityEventsTruncated;
+  const capabilityEventsTruncated = resolveOption(
+    base.options.capabilityEventsTruncated,
+  );
+  if (capabilityEventsTruncated !== undefined) {
+    receipt.capabilityCallsTruncated = capabilityEventsTruncated;
   }
   if (base.options.purpose !== undefined)
     receipt.purpose = base.options.purpose;
