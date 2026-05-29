@@ -2,6 +2,43 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.9.0 - 2026-05-29
+
+### Added
+
+- **`createHibernatingIsolatePool`** — SB-7 substrate for the eventual
+  hosted Cloud bet. A keyed pool of isolate+context pairs that
+  hibernates idle entries via the existing `context.checkpoint()` data
+  primitive and wakes them transparently on the next call by passing
+  the checkpoint back through `isolate.createContext({ checkpoint })`.
+  Far more "tenant logical contexts" than physical isolates, because
+  warm ones get serialized down to bytes when no one's calling them.
+  Options: `maxSize` (active + hibernated cap, default 100),
+  `hibernateAfterMs` (idle-trigger, default 60_000), `sweepIntervalMs`
+  (default 5_000), `hibernationStore` (pluggable; default in-memory),
+  `checkpointOptions` (forwarded to `context.checkpoint`),
+  `onTransition` (observability hook for `hibernate`/`wake`/`evict`).
+  `pool.run(key, fn)` resolves an active context (waking from a
+  hibernated checkpoint or spawning fresh as needed) and atomically
+  claims an in-flight slot before returning, so a concurrent
+  `pool.hibernate(key)` can't race in between. `pool.stats()` returns
+  `{ active, hibernated, total }`. Concurrent wakes share a
+  single-flight promise — N callers don't spawn N isolates. LRU
+  eviction at `maxSize` drops hibernated entries before active ones.
+  Stores that lose the checkpoint between hibernate and wake fall back
+  to fresh-spawn instead of throwing. 12 new tests; not a heap
+  pause/resume image (per `SNAPSHOT_RESEARCH.md`).
+- **`createInMemoryHibernationStore`** — the default backing store.
+  Exported separately so consumers can wrap it for observability
+  (route every `get`/`put`/`delete` through their metrics sink) or
+  layer caches in front of a persistent store.
+
+### Exports
+
+- `createHibernatingIsolatePool`, `createInMemoryHibernationStore` and
+  types `HibernatingIsolatePool`, `HibernatingIsolatePoolOptions`,
+  `HibernatingPoolStats`, `HibernationEvent`, `HibernationStore`.
+
 ## 0.8.21 - 2026-05-28
 
 ### Added

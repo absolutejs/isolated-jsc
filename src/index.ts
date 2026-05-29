@@ -8,6 +8,10 @@
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
 export {
+  createHibernatingIsolatePool,
+  createInMemoryHibernationStore,
+} from "./hibernation";
+export {
   checkpointWithReceipt,
   createContextWithReceipt,
   validateContextCheckpoint,
@@ -114,6 +118,13 @@ export type {
   Script,
 } from "./types";
 export type { IsolatePool, IsolatePoolOptions } from "./pool";
+export type {
+  HibernatingIsolatePool,
+  HibernatingIsolatePoolOptions,
+  HibernatingPoolStats,
+  HibernationEvent,
+  HibernationStore,
+} from "./hibernation";
 export type {
   CreateIsolatedRunnerOptions,
   IsolatedRunner,
