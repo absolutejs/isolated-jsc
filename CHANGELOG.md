@@ -2,6 +2,31 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.11.0 — 2026-05-30
+
+### Added — OpenTelemetry tracing via @absolutejs/telemetry
+
+Closes G2 (deep-research audit) for `createHibernatingIsolatePool`.
+
+- **`HibernatingIsolatePoolOptions.tracerProvider?: TracerProvider`** —
+  any `@opentelemetry/api`-compatible. Structural type via
+  `@absolutejs/telemetry`; no peer-dep on `@opentelemetry/api`.
+- **`isolated_jsc.run` span** per `pool.run(key, fn)`. Attributes:
+  `abs.tenant` (the key), `isolated_jsc.woke_from_hibernation`
+  (true on cold spawn AND on wake from hibernated), and
+  `isolated_jsc.wake_ms` (when the entry actually woke from a
+  hibernated checkpoint — the SLO-shaped signal customer SREs alert
+  on). Status OK on success; ERROR + `recordException` on handler
+  throw.
+- The other pool methods (`hibernate`, `warm`, `dispose`, etc.) emit
+  via the existing `onTransition` hook; OTel wiring stays focused on
+  `run` so the customer trace has one span per work invocation.
+- `@absolutejs/telemetry` added as a regular dep.
+- Zero-cost when `tracerProvider` is omitted.
+
+5 new tests in `tests/tracing.test.ts`: cold spawn / reuse / wake
+from hibernation / handler throw / noop fallback.
+
 ## 0.10.0 - 2026-05-29
 
 PaaS-substrate deepening. Backwards-compatible — new methods are

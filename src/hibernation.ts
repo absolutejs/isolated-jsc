@@ -55,6 +55,7 @@
  * ```
  */
 
+import { ABS_ATTRS, tracerOrNoop } from "@absolutejs/telemetry";
 import { createIsolate } from "./isolate";
 import type {
   Context,
@@ -126,6 +127,17 @@ export type HibernatingIsolatePoolOptions = {
    * Errors thrown by the hook are caught + ignored.
    */
   onTransition?: (event: HibernationEvent) => void;
+  /**
+   * Optional OpenTelemetry tracer provider. When set, every `run()`,
+   * `warm()`, and `hibernate()` call emits a span with
+   * `abs.tenant` (the key) and event-specific attributes (wake
+   * duration, hibernated byte length, etc.). When omitted, all
+   * tracing is a zero-allocation noop. Added in 0.11.0.
+   *
+   * Structural type via `@absolutejs/telemetry`; no peer-dep on
+   * `@opentelemetry/api`.
+   */
+  tracerProvider?: import("@absolutejs/telemetry").TracerProvider;
 };
 
 export type HibernationEvent =
@@ -253,6 +265,11 @@ export const createHibernatingIsolatePool = (
   const store = options.hibernationStore ?? createInMemoryHibernationStore();
   const checkpointOptions = options.checkpointOptions;
   const onTransition = options.onTransition;
+  // 0.11.0: OTel tracer (noop when options.tracerProvider unset).
+  const tracer = tracerOrNoop(
+    options.tracerProvider,
+    "@absolutejs/isolated-jsc",
+  );
 
   const entries = new Map<string, Entry>();
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
@@ -499,16 +516,48 @@ export const createHibernatingIsolatePool = (
       key: string,
       fn: (context: Context) => Promise<R>,
     ): Promise<R> {
-      // resolveAndClaim atomically increments inFlight, so a concurrent
-      // hibernate(key) cannot race in between resolution and our use of
-      // the context.
-      const entry = await resolveAndClaim(key);
-      entry.lastUsed = Date.now();
+      // 0.11.0: span the run. Tenant key + whether the entry was
+      // woken vs already active is the main signal — wake latency is
+      // what customer SREs care about most.
+      const span = tracer.startSpan("isolated_jsc.run", {
+        attributes: { [ABS_ATTRS.tenant]: key },
+      });
+      const resolveStart = Date.now();
       try {
-        return await fn(entry.context);
-      } finally {
-        entry.inFlight -= 1;
+        // Capture the pre-resolution state so the span can record
+        // whether this run included a wake.
+        const preExisting = entries.get(key);
+        const wasHibernated = preExisting?.state === "hibernated";
+        // resolveAndClaim atomically increments inFlight, so a concurrent
+        // hibernate(key) cannot race in between resolution and our use of
+        // the context.
+        const entry = await resolveAndClaim(key);
+        const resolveDurationMs = Date.now() - resolveStart;
+        span.setAttribute(
+          "isolated_jsc.woke_from_hibernation",
+          wasHibernated || preExisting === undefined,
+        );
+        if (wasHibernated) {
+          span.setAttribute("isolated_jsc.wake_ms", resolveDurationMs);
+        }
         entry.lastUsed = Date.now();
+        try {
+          const result = await fn(entry.context);
+          span.setStatus({ code: 1 /* OK */ });
+          return result;
+        } finally {
+          entry.inFlight -= 1;
+          entry.lastUsed = Date.now();
+        }
+      } catch (error) {
+        span.recordException(error);
+        span.setStatus({
+          code: 2 /* ERROR */,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      } finally {
+        span.end();
       }
     },
 
