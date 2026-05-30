@@ -2,6 +2,46 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.10.0 - 2026-05-29
+
+PaaS-substrate deepening. Backwards-compatible — new methods are
+additive; existing call sites keep working.
+
+### Added
+
+- **`HibernatingIsolatePool.metrics()`** — operator-shaped snapshot for
+  the PaaS host's metering loop. Point-in-time: `active`, `hibernated`,
+  `total`, `inFlight`, `draining`. Cumulative counters since pool start:
+  `hibernations`, `wakes`, `evictions`, `bytesHibernated`. Plus
+  `lastWakeMs` as a coarse SLO signal — a wake taking seconds suggests
+  checkpoint size blow-up or a slow store backend.
+- **`HibernatingIsolatePool.drain()`** — refuse new keys (`run` /
+  `warm` on an unknown key throws); active + hibernated entries keep
+  serving existing callers. For graceful shard shutdown: drain, wait
+  for `stats().total === 0`, then `dispose()`.
+- **`HibernatingIsolatePool.warm(key)`** — materialize an active context
+  ahead of expected work (wake from hibernation or spawn fresh) without
+  invoking user code. Removes cold-start tail from a tenant's first
+  request. Shares single-flight semantics with `run`.
+- **`IsolatePool.metrics()`** — same shape pattern for the non-hibernating
+  pool. Counters: `spawns`, `idleEvictions`, `lruEvictions`, `recycles`.
+  Point-in-time: `size`, `inFlight`, `draining`.
+- **`IsolatePool.drain()`** — same semantic on the simpler pool.
+- **`HibernatingPoolMetrics` + `IsolatePoolMetrics`** types exported.
+
+### Why this matters for the PaaS
+
+`createHibernatingIsolatePool` is the multi-tenant economics primitive
+("10k logical tenants, ~50 hot at any moment"). Pre-0.10 there was no
+operator-shaped read — host could only sample `stats()`. 0.10's
+`metrics()` feeds `@absolutejs/metering` directly: `bytesHibernated` is
+storage cost, `wakes × lastWakeMs` is wake-latency tail risk,
+`evictions` rate flags hot/cold churn. `drain()` matches the
+`@absolutejs/runtime` drain pattern so a shard shutdown is symmetric
+across both layers. `warm()` is the predictive pre-fetch path —
+useful when the host knows ahead of time (cron, scheduled handler,
+deploy promotion) that a tenant's context will be needed.
+
 ## 0.9.0 - 2026-05-29
 
 ### Added

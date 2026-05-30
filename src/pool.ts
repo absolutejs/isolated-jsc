@@ -54,6 +54,30 @@ export type IsolatePoolOptions = {
   sweepIntervalMs?: number;
 };
 
+/**
+ * Operator-shaped metrics surfaced by {@link IsolatePool.metrics} (0.10.0+).
+ * Counters + point-in-time fields a PaaS host scrapes on an interval to
+ * attribute per-tenant cost and detect a runaway.
+ */
+export type IsolatePoolMetrics = {
+  /** Date.now() when this snapshot was taken. */
+  at: number;
+  /** Active cached keys right now. */
+  size: number;
+  /** Active runs that haven't returned yet (sum of `inFlight` across entries). */
+  inFlight: number;
+  /** Cumulative spawns (first-use + post-recycle respawn) since pool start. */
+  spawns: number;
+  /** Cumulative idle-window evictions since pool start. */
+  idleEvictions: number;
+  /** Cumulative LRU evictions since pool start. */
+  lruEvictions: number;
+  /** Cumulative recycles since pool start (`run()` counts crossing `recycleAfter`). */
+  recycles: number;
+  /** True when the pool is draining (refusing new keys). */
+  draining: boolean;
+};
+
 /** A keyed pool of isolates. */
 export type IsolatePool = {
   /**
@@ -69,6 +93,18 @@ export type IsolatePool = {
   run: <R>(key: string, fn: (isolate: Isolate) => Promise<R>) => Promise<R>;
   /** Approximate active size — number of cached keys. */
   size: () => number;
+  /**
+   * Operator-shaped metrics — point-in-time + cumulative counters since
+   * pool start. What a PaaS host scrapes for cost attribution. Added in
+   * 0.10.0.
+   */
+  metrics: () => IsolatePoolMetrics;
+  /**
+   * Begin draining: refuse `run` on new keys (existing cached keys keep
+   * working). For graceful shard shutdown — wait for `size()` to reach 0
+   * then call `dispose()`. Added in 0.10.0.
+   */
+  drain: () => void;
   /** Dispose every isolate and stop the sweep. Idempotent. */
   dispose: () => Promise<void>;
 };
@@ -94,6 +130,12 @@ export const createIsolatePool = (
   const entries = new Map<string, Entry>();
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
+  // 0.10.0 counters surfaced via metrics().
+  let spawnsTotal = 0;
+  let idleEvictionsTotal = 0;
+  let lruEvictionsTotal = 0;
+  let recyclesTotal = 0;
+  let draining = false;
 
   const startSweepIfNeeded = (): void => {
     if (sweepTimer !== undefined || disposed) return;
@@ -103,6 +145,7 @@ export const createIsolatePool = (
       for (const [key, entry] of entries) {
         if (entry.inFlight > 0) continue;
         if (now - entry.lastUsed >= idleMs) {
+          idleEvictionsTotal += 1;
           void disposeEntry(key, entry);
         }
       }
@@ -141,6 +184,7 @@ export const createIsolatePool = (
       }
     }
     if (oldestKey !== undefined && oldestEntry !== undefined) {
+      lruEvictionsTotal += 1;
       void disposeEntry(oldestKey, oldestEntry);
     }
     // If every entry is in-flight, the new acquire fails open: we exceed
@@ -156,7 +200,12 @@ export const createIsolatePool = (
   const getOrCreateSync = (key: string): Entry => {
     const existing = entries.get(key);
     if (existing !== undefined) return existing;
+    // 0.10.0: drain refuses NEW keys; cached ones keep working.
+    if (draining) {
+      throw new Error("isolate pool is draining; refused new key");
+    }
     evictLruSyncIfNeeded();
+    spawnsTotal += 1;
     const fresh: Entry = {
       isolate: createIsolate(isolateOptions),
       lastUsed: Date.now(),
@@ -204,11 +253,29 @@ export const createIsolatePool = (
           entry.recycle = true;
         }
         if (entry.recycle && entry.inFlight === 0) {
+          recyclesTotal += 1;
           void disposeEntry(key, entry);
         }
       }
     },
     size: () => entries.size,
+    metrics: (): IsolatePoolMetrics => {
+      let inFlight = 0;
+      for (const entry of entries.values()) inFlight += entry.inFlight;
+      return {
+        at: Date.now(),
+        draining,
+        idleEvictions: idleEvictionsTotal,
+        inFlight,
+        lruEvictions: lruEvictionsTotal,
+        recycles: recyclesTotal,
+        size: entries.size,
+        spawns: spawnsTotal,
+      };
+    },
+    drain: () => {
+      draining = true;
+    },
     async dispose() {
       if (disposed) return;
       disposed = true;

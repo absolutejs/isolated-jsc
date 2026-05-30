@@ -139,6 +139,41 @@ export type HibernatingPoolStats = {
   total: number;
 };
 
+/**
+ * Operator-shaped metrics surfaced by {@link HibernatingIsolatePool.metrics}
+ * (0.10.0+). Point-in-time fields + cumulative counters since pool start —
+ * what a PaaS host scrapes on an interval to attribute hibernation cost and
+ * detect a runaway tenant.
+ */
+export type HibernatingPoolMetrics = {
+  /** Date.now() when this snapshot was taken. */
+  at: number;
+  /** Active contexts right now. */
+  active: number;
+  /** Hibernated keys in the store right now. */
+  hibernated: number;
+  /** Total tracked entries (`active + hibernated`). */
+  total: number;
+  /** Active runs that haven't returned yet (sum of `inFlight` across active entries). */
+  inFlight: number;
+  /** Cumulative hibernations since pool start. */
+  hibernations: number;
+  /** Cumulative wakes (from a hibernated checkpoint) since pool start. */
+  wakes: number;
+  /** Cumulative LRU evictions since pool start. */
+  evictions: number;
+  /** Cumulative bytes ever written to the hibernation store. Useful for storage cost attribution. */
+  bytesHibernated: number;
+  /**
+   * Wake duration of the most recent wake event, in ms. Useful as a
+   * coarse SLO signal — a wake taking seconds suggests checkpoint size
+   * blow-up or a slow store backend.
+   */
+  lastWakeMs: number;
+  /** True when the pool is draining (refusing new keys). */
+  draining: boolean;
+};
+
 export type HibernatingIsolatePool = {
   /**
    * Resolve the context for `key` (waking from a hibernated checkpoint if
@@ -155,6 +190,26 @@ export type HibernatingIsolatePool = {
   hibernate: (key: string) => Promise<void>;
   /** Snapshot of the pool's current state. */
   stats: () => HibernatingPoolStats;
+  /**
+   * Operator-shaped metrics — point-in-time + cumulative counters since
+   * pool start. What a PaaS host scrapes for cost attribution + SLO
+   * monitoring. Added in 0.10.0.
+   */
+  metrics: () => HibernatingPoolMetrics;
+  /**
+   * Begin draining: refuse new keys (`run` / `warm` on an unknown key
+   * rejects with an error). Active + hibernated entries keep serving
+   * existing callers; wait for `stats().total === 0` then call
+   * `dispose()` for a clean shutdown. Added in 0.10.0.
+   */
+  drain: () => void;
+  /**
+   * Ensure an active context exists for `key`, waking it from hibernation
+   * (or spawning fresh) without invoking user code. Use ahead of expected
+   * work to remove the cold-start tail from a tenant's first request.
+   * Returns when the context is live and ready. Added in 0.10.0.
+   */
+  warm: (key: string) => Promise<void>;
   /** Dispose every active isolate. Does NOT delete hibernated checkpoints
    * from the store — those persist (so a shared store survives process
    * restart). To purge, pass a store whose `delete` clears state and
@@ -202,6 +257,13 @@ export const createHibernatingIsolatePool = (
   const entries = new Map<string, Entry>();
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
+  // 0.10.0: cumulative counters surfaced via metrics().
+  let hibernationsTotal = 0;
+  let wakesTotal = 0;
+  let evictionsTotal = 0;
+  let bytesHibernatedTotal = 0;
+  let lastWakeMs = 0;
+  let draining = false;
 
   const emit = (event: HibernationEvent): void => {
     if (onTransition === undefined) return;
@@ -243,6 +305,7 @@ export const createHibernatingIsolatePool = (
       if (evicted >= target) break;
       entries.delete(key);
       void Promise.resolve(store.delete(key)).catch(() => {});
+      evictionsTotal += 1;
       emit({ from: "hibernated", key, type: "evict" });
       evicted += 1;
     }
@@ -250,6 +313,7 @@ export const createHibernatingIsolatePool = (
       if (evicted >= target) break;
       entries.delete(key);
       void disposeActiveEntry(entry).catch(() => {});
+      evictionsTotal += 1;
       emit({ from: "active", key, type: "evict" });
       evicted += 1;
     }
@@ -299,6 +363,8 @@ export const createHibernatingIsolatePool = (
       waking: null,
     };
     entries.set(key, hibernated);
+    hibernationsTotal += 1;
+    bytesHibernatedTotal += checkpoint.byteLength;
     emit({ byteLength: checkpoint.byteLength, key, type: "hibernate" });
   };
 
@@ -357,6 +423,7 @@ export const createHibernatingIsolatePool = (
     key: string,
     claim: boolean,
   ): Promise<ActiveEntry> => {
+    const wakeStartedAt = Date.now();
     const checkpoint = await store.get(key);
     if (checkpoint === undefined) {
       // The store lost the checkpoint between hibernate and wake. Treat
@@ -374,6 +441,8 @@ export const createHibernatingIsolatePool = (
       state: "active",
     };
     entries.set(key, entry);
+    wakesTotal += 1;
+    lastWakeMs = Date.now() - wakeStartedAt;
     emit({ from: "hibernated", key, type: "wake" });
     // The store keeps the checkpoint until next hibernate overwrites it
     // (cheap, and survives a crash mid-run if the store is persistent).
@@ -392,6 +461,11 @@ export const createHibernatingIsolatePool = (
     if (disposed) throw new Error("hibernating isolate pool has been disposed");
     const existing = entries.get(key);
     if (existing === undefined) {
+      // 0.10.0: drain refuses NEW keys. Existing entries (active or
+      // hibernated) keep serving; only fresh spawns are blocked.
+      if (draining) {
+        throw new Error("hibernating isolate pool is draining; refused new key");
+      }
       evictLruIfNeeded();
       return spawnFresh(key, true);
     }
@@ -460,6 +534,47 @@ export const createHibernatingIsolatePool = (
     },
 
     stats,
+
+    metrics: (): HibernatingPoolMetrics => {
+      let active = 0;
+      let hibernated = 0;
+      let inFlight = 0;
+      for (const entry of entries.values()) {
+        if (entry.state === "active") {
+          active += 1;
+          inFlight += entry.inFlight;
+        } else {
+          hibernated += 1;
+        }
+      }
+      return {
+        active,
+        at: Date.now(),
+        bytesHibernated: bytesHibernatedTotal,
+        draining,
+        evictions: evictionsTotal,
+        hibernated,
+        hibernations: hibernationsTotal,
+        inFlight,
+        lastWakeMs,
+        total: entries.size,
+        wakes: wakesTotal,
+      };
+    },
+
+    drain: () => {
+      draining = true;
+    },
+
+    async warm(key) {
+      if (disposed) throw new Error("hibernating isolate pool has been disposed");
+      // warm shares the resolveAndClaim path so cold-spawn / wake / single-
+      // flight semantics all match `run`. We decrement immediately — the
+      // caller didn't run user code, they just wanted the context live.
+      const entry = await resolveAndClaim(key);
+      entry.inFlight -= 1;
+      entry.lastUsed = Date.now();
+    },
 
     async dispose() {
       if (disposed) return;
