@@ -28,8 +28,8 @@ linked below have the same root cause.
 
 **Upstream:**
 
-- **[oven-sh/bun#31462](https://github.com/oven-sh/bun/issues/31462)** — "`bun:test`: `await expect(promise).rejects.toThrow()` hangs to timeout when promise resolves via cross-Worker postMessage" — **open**, filed by us 2026-05-27. Worker-flavoured repro lives at [`repro/bun-rejects-toThrow-worker/`](./repro/bun-rejects-toThrow-worker/).
-- **[oven-sh/bun#5602](https://github.com/oven-sh/bun/issues/5602)** — "Fix `expect().rejects.toThrow()`" — **open** since 2023-09-17, labelled `bug`, `bun:test`. The tracking umbrella. No RoboBun activity; eight community comments confirming the bug across years.
+- **[oven-sh/bun#31462](https://github.com/oven-sh/bun/issues/31462)** — "`bun:test`: `await expect(promise).rejects.toThrow()` hangs to timeout when promise resolves via cross-Worker postMessage" — **closed 2026-05-30 as duplicate of #5602** (auto-deduped by `github-actions`). Filed by us 2026-05-27. Worker-flavoured repro lives at [`repro/bun-rejects-toThrow-worker/`](./repro/bun-rejects-toThrow-worker/). Tracking now follows #5602.
+- **[oven-sh/bun#5602](https://github.com/oven-sh/bun/issues/5602)** — "Fix `expect().rejects.toThrow()`" — the tracking umbrella (open since 2023-09-17). **Closed as completed** (fix referenced in commit `aad1d68`), **but the fix is NOT yet in a stable Bun release**: the repro below still hangs on Bun 1.3.14 (verified 2026-06-16). So the workaround stays until a stable Bun actually ships it — closure of the issue is not the trigger; a passing repro is.
 - **[oven-sh/bun#14670](https://github.com/oven-sh/bun/issues/14670)** — "Timeout in test when expecting promise from bun shell to throw" — **open** since 2024-10-18, labelled `bug`, `bun:test`, `shell`, **`confirmed bug`**. Same symptom against `$\`bad-command\``. No comments; the team applied the `confirmed bug` label without discussion.
 - **[oven-sh/bun#19130](https://github.com/oven-sh/bun/issues/19130)** — "`bun test` hangs up in timeout with PostgreSQL and `expect->toThrow()`" — **open** since 2025-04-19. Exact same hang pattern against a PostgreSQL handle. Multiple users confirming; `@robobun` was pinged 2026-04-08 — no response.
 - **[oven-sh/bun#23420](https://github.com/oven-sh/bun/issues/23420)** — "Matchers under `expect().resolves` and `expect().rejects` should return a promise but return `undefined` instead" — **open** since 2025-10-10. Adjacent matcher gap; landing this likely lands #5602 too.
@@ -42,6 +42,10 @@ linked below have the same root cause.
   on the captured value instead of `await expect(p).rejects.toThrow(...)`.
 
 **Cleanup once the upstream fix ships in a stable Bun release:**
+
+> Status 2026-06-16: #5602 is closed-as-completed upstream but the fix has **not**
+> reached a stable Bun release — the repro still hangs on 1.3.14. Re-check on each
+> Bun upgrade; the steps below apply only once step 1 passes.
 
 1. Run the standalone repro at [`repro/bun-rejects-toThrow-worker/`](./repro/bun-rejects-toThrow-worker/):
    ```bash
