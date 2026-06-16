@@ -6,6 +6,10 @@
     "type": "git",
     "url": "git+https://github.com/absolutejs/isolated-jsc.git"
   },
+  "homepage": "https://github.com/absolutejs/isolated-jsc",
+  "bugs": {
+    "url": "https://github.com/absolutejs/isolated-jsc/issues"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
