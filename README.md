@@ -524,4 +524,4 @@ The release check runs the package typecheck, build, unit tests, agent-tool exam
 
 ## License
 
-CC BY-NC 4.0. Commercial licensing available — contact `l@nagy.vc`.
+Business Source License 1.1 — production use is free except offering it as a competing hosted sandbox/isolate service (see the Additional Use Grant in [LICENSE](./LICENSE)). Converts to Apache 2.0 on May 29, 2030. Commercial licensing available — contact `l@nagy.vc`.
