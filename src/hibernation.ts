@@ -56,6 +56,12 @@
  */
 
 import { ABS_ATTRS, tracerOrNoop } from "@absolutejs/telemetry";
+import {
+  createAdaptiveHibernationPolicy,
+  type AdaptiveHibernationAdjustmentReason,
+  type AdaptiveHibernationMetrics,
+  type AdaptiveHibernationPolicyOptions,
+} from "./adaptiveHibernation";
 import { createIsolate } from "./isolate";
 import type {
   Context,
@@ -109,6 +115,12 @@ export type HibernatingIsolatePoolOptions = {
    */
   hibernateAfterMs?: number;
   /**
+   * Adapt the idle window from observed checkpoint residence and wake cost.
+   * Bounds are mandatory policy: adaptation can never move outside them.
+   * Omit to preserve the fixed `hibernateAfterMs` behavior.
+   */
+  adaptiveHibernation?: Omit<AdaptiveHibernationPolicyOptions, "initialIdleMs">;
+  /**
    * Background sweep interval. Default 5_000 ms. Sweeps run only when
    * the pool is non-empty and are unrefed so they don't keep the
    * process alive.
@@ -156,6 +168,13 @@ export type HibernationEvent =
       type: "hibernate-failed";
       key: string;
       reason: "checkpoint-error" | "store-error";
+    }
+  | {
+      type: "policy-adjusted";
+      action: "decrease" | "increase";
+      effectiveIdleMs: number;
+      previousIdleMs: number;
+      reason: AdaptiveHibernationAdjustmentReason;
     };
 
 export type HibernatingPoolStats = {
@@ -207,6 +226,8 @@ export type HibernatingPoolMetrics = {
   lastWakeMs: number;
   /** True when the pool is draining (refusing new keys). */
   draining: boolean;
+  /** Adaptive idle-window posture, or null when fixed-window mode is used. */
+  adaptiveHibernation: AdaptiveHibernationMetrics | null;
 };
 
 export type HibernatingIsolatePool = {
@@ -269,6 +290,8 @@ type ActiveEntry = {
 type HibernatedEntry = {
   state: "hibernated";
   lastUsed: number;
+  /** Wall time when this process wrote the checkpoint; absent after restart. */
+  hibernatedAt?: number;
   /**
    * Set while a wake is in flight. Concurrent `run` callers share the
    * single wake instead of racing to create N isolates.
@@ -288,6 +311,13 @@ export const createHibernatingIsolatePool = (
   const store = options.hibernationStore ?? createInMemoryHibernationStore();
   const checkpointOptions = options.checkpointOptions;
   const onTransition = options.onTransition;
+  const adaptivePolicy =
+    options.adaptiveHibernation && hibernateAfterMs > 0
+      ? createAdaptiveHibernationPolicy({
+          ...options.adaptiveHibernation,
+          initialIdleMs: hibernateAfterMs,
+        })
+      : undefined;
   // 0.11.0: OTel tracer (noop when options.tracerProvider unset).
   const tracer = tracerOrNoop(
     options.tracerProvider,
@@ -411,6 +441,7 @@ export const createHibernatingIsolatePool = (
     }
     await disposeActiveEntry(entry);
     const hibernated: HibernatedEntry = {
+      hibernatedAt: Date.now(),
       lastUsed: entry.lastUsed,
       state: "hibernated",
       waking: null,
@@ -437,7 +468,9 @@ export const createHibernatingIsolatePool = (
         if (entry.state !== "active") continue;
         if (entry.inFlight > 0) continue;
         if (entry.hibernating !== null) continue;
-        if (now - entry.lastUsed < hibernateAfterMs) continue;
+        const effectiveIdleMs =
+          adaptivePolicy?.effectiveIdleMs() ?? hibernateAfterMs;
+        if (now - entry.lastUsed < effectiveIdleMs) continue;
         const promise = hibernateActive(key, entry);
         entry.hibernating = promise;
         promise.finally(() => {
@@ -486,6 +519,10 @@ export const createHibernatingIsolatePool = (
     claim: boolean,
   ): Promise<ActiveEntry> => {
     const wakeStartedAt = Date.now();
+    const hibernated = entries.get(key);
+    const hibernatedAt =
+      hibernated?.state === "hibernated" ? hibernated.hibernatedAt : undefined;
+    const spawnBaselineMs = lastSpawnMs;
     let checkpoint: ContextCheckpoint | undefined;
     try {
       checkpoint = await store.get(key);
@@ -534,6 +571,21 @@ export const createHibernatingIsolatePool = (
       key,
       type: "wake",
     });
+    if (adaptivePolicy && hibernatedAt !== undefined) {
+      const decision = adaptivePolicy.observe({
+        residenceMs: Math.max(0, Date.now() - hibernatedAt),
+        ...(spawnBaselineMs > 0 ? { spawnMs: spawnBaselineMs } : {}),
+        wakeMs: lastWakeMs,
+      });
+      if (decision.action !== "hold")
+        emit({
+          action: decision.action,
+          effectiveIdleMs: decision.effectiveIdleMs,
+          previousIdleMs: decision.previousIdleMs,
+          reason: decision.reason,
+          type: "policy-adjusted",
+        });
+    }
     // The store keeps the checkpoint until next hibernate overwrites it
     // (cheap, and survives a crash mid-run if the store is persistent).
     startSweepIfNeeded();
@@ -572,6 +624,7 @@ export const createHibernatingIsolatePool = (
           }
           if (checkpoint === undefined) return spawnFresh(key, false);
           entries.set(key, {
+            hibernatedAt: undefined,
             lastUsed: Date.now(),
             state: "hibernated",
             waking: null,
@@ -700,6 +753,7 @@ export const createHibernatingIsolatePool = (
       }
       return {
         active,
+        adaptiveHibernation: adaptivePolicy?.metrics() ?? null,
         at: Date.now(),
         bytesHibernated: bytesHibernatedTotal,
         draining,

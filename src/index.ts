@@ -7,6 +7,7 @@
 
 export { createIsolate } from "./isolate";
 export { createIsolatePool } from "./pool";
+export { createAdaptiveHibernationPolicy } from "./adaptiveHibernation";
 export {
   createHibernatingIsolatePool,
   createInMemoryHibernationStore,
@@ -118,6 +119,14 @@ export type {
   Script,
 } from "./types";
 export type { IsolatePool, IsolatePoolOptions } from "./pool";
+export type {
+  AdaptiveHibernationAdjustmentReason,
+  AdaptiveHibernationDecision,
+  AdaptiveHibernationMetrics,
+  AdaptiveHibernationObservation,
+  AdaptiveHibernationPolicy,
+  AdaptiveHibernationPolicyOptions,
+} from "./adaptiveHibernation";
 export type {
   HibernatingIsolatePool,
   HibernatingIsolatePoolOptions,

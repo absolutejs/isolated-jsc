@@ -86,6 +86,29 @@ describe("createHibernatingIsolatePool", () => {
     expect(pool.stats()).toEqual({ active: 1, hibernated: 0, total: 1 });
   });
 
+  test("adapts the effective idle window after observed wake churn", async () => {
+    pool = createHibernatingIsolatePool({
+      adaptiveHibernation: {
+        adjustmentStepMs: 5_000,
+        maximumIdleMs: 30_000,
+        minimumIdleMs: 5_000,
+        minimumResidenceMs: 60_000,
+        observationsPerAdjustment: 1,
+      },
+      hibernateAfterMs: 10_000,
+    });
+    await pool.run("adaptive", async () => undefined);
+    await pool.hibernate("adaptive");
+    await pool.run("adaptive", async () => undefined);
+
+    expect(pool.metrics().adaptiveHibernation).toMatchObject({
+      adjustments: 1,
+      effectiveIdleMs: 15_000,
+      increases: 1,
+      lastReason: "wake-churn",
+    });
+  });
+
   test("a fresh pool discovers and single-flight restores a persistent checkpoint", async () => {
     const stored = new Map<string, ContextCheckpoint>();
     const store: HibernationStore = {

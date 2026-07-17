@@ -2,6 +2,23 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.12.0 — 2026-07-17
+
+### Added
+
+- `createAdaptiveHibernationPolicy` converts repeated checkpoint residence,
+  wake latency, and fresh-spawn latency observations into a bounded effective
+  idle window. Repeated short-residence churn or wakes slower than fresh spawn
+  back the window off; valuable long residence moves it earlier.
+- `createHibernatingIsolatePool({ adaptiveHibernation })` applies that policy
+  without changing fixed-window defaults. Metrics expose the current window,
+  evidence score, adjustments, and reasons; transition hooks receive every
+  applied policy adjustment.
+
+The caller owns the hard minimum/maximum bounds. Adaptation cannot enable
+hibernation when `hibernateAfterMs` is disabled and never moves outside those
+bounds.
+
 ## 0.11.3 — 2026-07-17
 
 ### Fixed
