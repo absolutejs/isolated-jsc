@@ -121,6 +121,7 @@ export type { IsolatePool, IsolatePoolOptions } from "./pool";
 export type {
   HibernatingIsolatePool,
   HibernatingIsolatePoolOptions,
+  HibernatingPoolMetrics,
   HibernatingPoolStats,
   HibernationEvent,
   HibernationStore,

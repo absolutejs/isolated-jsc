@@ -2,6 +2,14 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.11.2 — 2026-07-17
+
+### Fixed
+
+- Exported `HibernatingPoolMetrics` from the package root. The public
+  `pool.metrics()` method and changelog already promised this type, but the root
+  declaration surface accidentally omitted it.
+
 ## 0.11.1 — 2026-07-17
 
 ### Added
