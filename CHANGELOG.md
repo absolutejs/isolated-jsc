@@ -2,6 +2,16 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.11.3 — 2026-07-17
+
+### Fixed
+
+- Fresh hibernating pools now discover checkpoints from persistent stores, so
+  durable state actually survives a host process restart as the storage
+  contract promises.
+- Concurrent first calls for the same cold or persistently hibernated key now
+  share one materialization instead of racing multiple isolate restores.
+
 ## 0.11.2 — 2026-07-17
 
 ### Fixed

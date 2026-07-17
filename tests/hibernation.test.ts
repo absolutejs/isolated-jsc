@@ -86,6 +86,46 @@ describe("createHibernatingIsolatePool", () => {
     expect(pool.stats()).toEqual({ active: 1, hibernated: 0, total: 1 });
   });
 
+  test("a fresh pool discovers and single-flight restores a persistent checkpoint", async () => {
+    const stored = new Map<string, ContextCheckpoint>();
+    const store: HibernationStore = {
+      delete: (key) => {
+        stored.delete(key);
+      },
+      get: (key) => stored.get(key),
+      put: (key, checkpoint) => {
+        stored.set(key, checkpoint);
+      },
+    };
+    pool = createHibernatingIsolatePool({
+      hibernateAfterMs: 0,
+      hibernationStore: store,
+    });
+    await pool.run("tenant-restart", async (context) => {
+      const fn = await context.compileCallable(`() => { this.count = 41 }`);
+      await fn.call([]);
+    });
+    await pool.hibernate("tenant-restart");
+    await pool.dispose();
+
+    pool = createHibernatingIsolatePool({
+      hibernateAfterMs: 0,
+      hibernationStore: store,
+    });
+    const values = await Promise.all([
+      pool.run("tenant-restart", async (context) => {
+        const fn = await context.compileCallable(`() => ++this.count`);
+        return fn.call([]);
+      }),
+      pool.run("tenant-restart", async (context) => {
+        const fn = await context.compileCallable(`() => ++this.count`);
+        return fn.call([]);
+      }),
+    ]);
+    expect(values.sort()).toEqual([42, 43]);
+    expect(pool.metrics()).toMatchObject({ spawns: 0, wakes: 1 });
+  });
+
   test("auto-hibernate after the idle threshold elapses", async () => {
     pool = createHibernatingIsolatePool({
       hibernateAfterMs: 30,
@@ -176,6 +216,7 @@ describe("createHibernatingIsolatePool", () => {
       expect(v).toBe("evt");
     });
     expect(events).toEqual([
+      { key: "tenant-e", op: "get" },
       { key: "tenant-e", op: "put" },
       { key: "tenant-e", op: "get" },
     ]);

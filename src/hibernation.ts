@@ -295,6 +295,7 @@ export const createHibernatingIsolatePool = (
   );
 
   const entries = new Map<string, Entry>();
+  const coldStarts = new Map<string, Promise<ActiveEntry>>();
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
   // 0.10.0: cumulative counters surfaced via metrics().
@@ -558,7 +559,34 @@ export const createHibernatingIsolatePool = (
         );
       }
       evictLruIfNeeded();
-      return spawnFresh(key, true);
+      let materializing = coldStarts.get(key);
+      if (materializing === undefined) {
+        materializing = (async () => {
+          let checkpoint: ContextCheckpoint | undefined;
+          try {
+            checkpoint = await store.get(key);
+          } catch {
+            restoreFallbacksTotal += 1;
+            emit({ key, reason: "store-error", type: "restore-fallback" });
+            return spawnFresh(key, false);
+          }
+          if (checkpoint === undefined) return spawnFresh(key, false);
+          entries.set(key, {
+            lastUsed: Date.now(),
+            state: "hibernated",
+            waking: null,
+          });
+          return wakeFromHibernation(key, false);
+        })();
+        coldStarts.set(key, materializing);
+        void materializing.then(
+          () => coldStarts.delete(key),
+          () => coldStarts.delete(key),
+        );
+      }
+      const entry = await materializing;
+      entry.inFlight += 1;
+      return entry;
     }
     if (existing.state === "active") {
       if (existing.hibernating !== null) {
