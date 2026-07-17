@@ -85,6 +85,11 @@ describe("HibernatingIsolatePool.metrics + drain + warm (0.10.0)", () => {
     expect(m.wakes).toBe(0);
     expect(m.evictions).toBe(0);
     expect(m.bytesHibernated).toBe(0);
+    expect(m.spawns).toBe(0);
+    expect(m.hibernationFailures).toBe(0);
+    expect(m.restoreFallbacks).toBe(0);
+    expect(m.lastSpawnMs).toBe(0);
+    expect(m.lastHibernateMs).toBe(0);
     expect(m.lastWakeMs).toBe(0);
     expect(m.draining).toBe(false);
   });
@@ -121,7 +126,9 @@ describe("HibernatingIsolatePool.metrics + drain + warm (0.10.0)", () => {
     // state into the context heap (so the hibernation checkpoint is
     // non-trivial).
     await p.run("tenant-1", async (ctx) => {
-      const fn = await ctx.compileCallable("(args) => { this.x = args.v; return 1; }");
+      const fn = await ctx.compileCallable(
+        "(args) => { this.x = args.v; return 1; }",
+      );
       await fn.call([{ v: 42 }]);
     });
 
@@ -135,6 +142,8 @@ describe("HibernatingIsolatePool.metrics + drain + warm (0.10.0)", () => {
     // Reading wakes it up.
     await p.run("tenant-1", async () => undefined);
     const post = p.metrics();
+    expect(post.spawns).toBe(1);
+    expect(post.lastHibernateMs).toBeGreaterThanOrEqual(0);
     expect(post.wakes).toBe(1);
     expect(post.lastWakeMs).toBeGreaterThanOrEqual(0);
     expect(post.active).toBe(1);

@@ -74,10 +74,7 @@ export type HibernationStore = {
   get: (
     key: string,
   ) => Promise<ContextCheckpoint | undefined> | ContextCheckpoint | undefined;
-  put: (
-    key: string,
-    checkpoint: ContextCheckpoint,
-  ) => Promise<void> | void;
+  put: (key: string, checkpoint: ContextCheckpoint) => Promise<void> | void;
   delete: (key: string) => Promise<void> | void;
 };
 
@@ -141,9 +138,25 @@ export type HibernatingIsolatePoolOptions = {
 };
 
 export type HibernationEvent =
-  | { type: "wake"; key: string; from: "hibernated" }
-  | { type: "hibernate"; key: string; byteLength: number }
-  | { type: "evict"; key: string; from: "active" | "hibernated" };
+  | {
+      type: "wake";
+      key: string;
+      from: "hibernated";
+      byteLength: number;
+      durationMs: number;
+    }
+  | { type: "hibernate"; key: string; byteLength: number; durationMs: number }
+  | { type: "evict"; key: string; from: "active" | "hibernated" }
+  | {
+      type: "restore-fallback";
+      key: string;
+      reason: "checkpoint-invalid" | "checkpoint-missing" | "store-error";
+    }
+  | {
+      type: "hibernate-failed";
+      key: string;
+      reason: "checkpoint-error" | "store-error";
+    };
 
 export type HibernatingPoolStats = {
   active: number;
@@ -176,6 +189,16 @@ export type HibernatingPoolMetrics = {
   evictions: number;
   /** Cumulative bytes ever written to the hibernation store. Useful for storage cost attribution. */
   bytesHibernated: number;
+  /** Cumulative fresh isolate/context materializations, including safe restore fallbacks. */
+  spawns: number;
+  /** Cumulative hibernation attempts that failed and evicted their active entry. */
+  hibernationFailures: number;
+  /** Cumulative wakes that safely fell back to a fresh context. */
+  restoreFallbacks: number;
+  /** Duration of the most recent fresh isolate/context materialization. */
+  lastSpawnMs: number;
+  /** Duration of the most recent successful hibernation write. */
+  lastHibernateMs: number;
   /**
    * Wake duration of the most recent wake event, in ms. Useful as a
    * coarse SLO signal — a wake taking seconds suggests checkpoint size
@@ -280,6 +303,11 @@ export const createHibernatingIsolatePool = (
   let evictionsTotal = 0;
   let bytesHibernatedTotal = 0;
   let lastWakeMs = 0;
+  let spawnsTotal = 0;
+  let hibernationFailuresTotal = 0;
+  let restoreFallbacksTotal = 0;
+  let lastSpawnMs = 0;
+  let lastHibernateMs = 0;
   let draining = false;
 
   const emit = (event: HibernationEvent): void => {
@@ -353,6 +381,7 @@ export const createHibernatingIsolatePool = (
     key: string,
     entry: ActiveEntry,
   ): Promise<void> => {
+    const startedAt = Date.now();
     // Capture checkpoint. If checkpoint throws (e.g. data not clone-able),
     // drop the entry entirely rather than pretending we hibernated.
     let checkpoint: ContextCheckpoint;
@@ -361,6 +390,9 @@ export const createHibernatingIsolatePool = (
     } catch {
       entries.delete(key);
       await disposeActiveEntry(entry);
+      hibernationFailuresTotal += 1;
+      evictionsTotal += 1;
+      emit({ key, reason: "checkpoint-error", type: "hibernate-failed" });
       emit({ from: "active", key, type: "evict" });
       return;
     }
@@ -370,6 +402,9 @@ export const createHibernatingIsolatePool = (
       // Storage failed — drop without leaving a half-hibernated marker.
       entries.delete(key);
       await disposeActiveEntry(entry);
+      hibernationFailuresTotal += 1;
+      evictionsTotal += 1;
+      emit({ key, reason: "store-error", type: "hibernate-failed" });
       emit({ from: "active", key, type: "evict" });
       return;
     }
@@ -382,7 +417,13 @@ export const createHibernatingIsolatePool = (
     entries.set(key, hibernated);
     hibernationsTotal += 1;
     bytesHibernatedTotal += checkpoint.byteLength;
-    emit({ byteLength: checkpoint.byteLength, key, type: "hibernate" });
+    lastHibernateMs = Date.now() - startedAt;
+    emit({
+      byteLength: checkpoint.byteLength,
+      durationMs: lastHibernateMs,
+      key,
+      type: "hibernate",
+    });
   };
 
   const startSweepIfNeeded = (): void => {
@@ -418,6 +459,7 @@ export const createHibernatingIsolatePool = (
     key: string,
     claim: boolean,
   ): Promise<ActiveEntry> => {
+    const startedAt = Date.now();
     const isolate = await createIsolate(isolateOptions);
     const context = await isolate.createContext();
     const entry: ActiveEntry = {
@@ -432,6 +474,8 @@ export const createHibernatingIsolatePool = (
       state: "active",
     };
     entries.set(key, entry);
+    spawnsTotal += 1;
+    lastSpawnMs = Date.now() - startedAt;
     startSweepIfNeeded();
     return entry;
   };
@@ -441,14 +485,36 @@ export const createHibernatingIsolatePool = (
     claim: boolean,
   ): Promise<ActiveEntry> => {
     const wakeStartedAt = Date.now();
-    const checkpoint = await store.get(key);
+    let checkpoint: ContextCheckpoint | undefined;
+    try {
+      checkpoint = await store.get(key);
+    } catch {
+      restoreFallbacksTotal += 1;
+      emit({ key, reason: "store-error", type: "restore-fallback" });
+      return spawnFresh(key, claim);
+    }
     if (checkpoint === undefined) {
       // The store lost the checkpoint between hibernate and wake. Treat
       // the key as fresh — better than throwing.
+      restoreFallbacksTotal += 1;
+      emit({ key, reason: "checkpoint-missing", type: "restore-fallback" });
       return spawnFresh(key, claim);
     }
     const isolate = await createIsolate(isolateOptions);
-    const context = await isolate.createContext({ checkpoint });
+    let context: Context;
+    try {
+      context = await isolate.createContext({ checkpoint });
+    } catch {
+      try {
+        await isolate.dispose();
+      } catch {
+        // The restore error remains authoritative.
+      }
+      await Promise.resolve(store.delete(key)).catch(() => {});
+      restoreFallbacksTotal += 1;
+      emit({ key, reason: "checkpoint-invalid", type: "restore-fallback" });
+      return spawnFresh(key, claim);
+    }
     const entry: ActiveEntry = {
       context,
       hibernating: null,
@@ -460,7 +526,13 @@ export const createHibernatingIsolatePool = (
     entries.set(key, entry);
     wakesTotal += 1;
     lastWakeMs = Date.now() - wakeStartedAt;
-    emit({ from: "hibernated", key, type: "wake" });
+    emit({
+      byteLength: checkpoint.byteLength,
+      durationMs: lastWakeMs,
+      from: "hibernated",
+      key,
+      type: "wake",
+    });
     // The store keeps the checkpoint until next hibernate overwrites it
     // (cheap, and survives a crash mid-run if the store is persistent).
     startSweepIfNeeded();
@@ -481,7 +553,9 @@ export const createHibernatingIsolatePool = (
       // 0.10.0: drain refuses NEW keys. Existing entries (active or
       // hibernated) keep serving; only fresh spawns are blocked.
       if (draining) {
-        throw new Error("hibernating isolate pool is draining; refused new key");
+        throw new Error(
+          "hibernating isolate pool is draining; refused new key",
+        );
       }
       evictLruIfNeeded();
       return spawnFresh(key, true);
@@ -604,8 +678,13 @@ export const createHibernatingIsolatePool = (
         evictions: evictionsTotal,
         hibernated,
         hibernations: hibernationsTotal,
+        hibernationFailures: hibernationFailuresTotal,
         inFlight,
+        lastHibernateMs,
+        lastSpawnMs,
         lastWakeMs,
+        restoreFallbacks: restoreFallbacksTotal,
+        spawns: spawnsTotal,
         total: entries.size,
         wakes: wakesTotal,
       };
@@ -616,7 +695,8 @@ export const createHibernatingIsolatePool = (
     },
 
     async warm(key) {
-      if (disposed) throw new Error("hibernating isolate pool has been disposed");
+      if (disposed)
+        throw new Error("hibernating isolate pool has been disposed");
       // warm shares the resolveAndClaim path so cold-spawn / wake / single-
       // flight semantics all match `run`. We decrement immediately — the
       // caller didn't run user code, they just wanted the context live.

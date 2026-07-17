@@ -2,6 +2,20 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.11.1 — 2026-07-17
+
+### Added
+
+- Hibernating-pool metrics now distinguish fresh materializations, successful
+  hibernations, restore fallbacks, and hibernation failures, with the most
+  recent spawn, hibernate, and wake durations.
+- Transition events now carry checkpoint bytes and operation durations.
+
+### Fixed
+
+- Missing, unreadable, or incompatible stored checkpoints now fail safely to a
+  fresh context instead of failing the tenant request or retaining bad state.
+
 ## 0.11.0 — 2026-05-30
 
 ### Added — OpenTelemetry tracing via @absolutejs/telemetry

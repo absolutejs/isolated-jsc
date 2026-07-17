@@ -181,6 +181,45 @@ describe("createHibernatingIsolatePool", () => {
     ]);
   });
 
+  test("falls back to a fresh context when a stored checkpoint is invalid", async () => {
+    const events: HibernationEvent[] = [];
+    let checkpoint: ContextCheckpoint | undefined;
+    const store: HibernationStore = {
+      delete: () => {
+        checkpoint = undefined;
+      },
+      get: () => checkpoint,
+      put: (_key, value) => {
+        checkpoint = value;
+      },
+    };
+    pool = createHibernatingIsolatePool({
+      hibernateAfterMs: 0,
+      hibernationStore: store,
+      onTransition: (event) => events.push(event),
+    });
+    await pool.run("tenant-invalid", async (context) => {
+      const fn = await context.compileCallable("() => { this.value = 42 }");
+      await fn.call([]);
+    });
+    await pool.hibernate("tenant-invalid");
+    checkpoint = { ...checkpoint!, schemaVersion: 999 as 1 };
+
+    const restored = await pool.run("tenant-invalid", async (context) => {
+      const fn = await context.compileCallable("() => this.value ?? 'fresh'");
+      return fn.call([]);
+    });
+
+    expect(restored).toBe("fresh");
+    expect(pool.metrics().restoreFallbacks).toBe(1);
+    expect(pool.metrics().spawns).toBe(2);
+    expect(events).toContainEqual({
+      key: "tenant-invalid",
+      reason: "checkpoint-invalid",
+      type: "restore-fallback",
+    });
+  });
+
   test("LRU eviction drops oldest hibernated entries first when over maxSize", async () => {
     pool = createHibernatingIsolatePool({
       hibernateAfterMs: 0,
@@ -244,7 +283,10 @@ describe("createHibernatingIsolatePool", () => {
     await pool.dispose();
     expect(pool.stats()).toEqual({ active: 0, hibernated: 0, total: 0 });
     await expect(
-      pool.run("a", async () => 1 as unknown as Awaited<ReturnType<typeof Promise.resolve>>),
+      pool.run(
+        "a",
+        async () => 1 as unknown as Awaited<ReturnType<typeof Promise.resolve>>,
+      ),
     ).rejects.toThrow(/disposed/);
   });
 

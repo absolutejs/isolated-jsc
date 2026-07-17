@@ -1,6 +1,6 @@
 {
   "name": "@absolutejs/isolated-jsc",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "JavaScriptCore-native sandbox for Bun — heap-isolated execution for untrusted code, isolated-vm-shaped API",
   "repository": {
     "type": "git",
