@@ -30,6 +30,39 @@ afterEach(async () => {
 });
 
 describe("createHibernatingIsolatePool", () => {
+  test("hot-reconfigures and disables adaptation without replacing contexts", async () => {
+    const transitions: unknown[] = [];
+    pool = createHibernatingIsolatePool({
+      adaptiveHibernation: {
+        maximumIdleMs: 30_000,
+        minimumIdleMs: 5_000,
+      },
+      hibernateAfterMs: 10_000,
+      onTransition: (event) => transitions.push(event),
+    });
+    await pool.run("tenant", async (context) => {
+      await context.setGlobal("retained", true);
+    });
+    expect(
+      pool.configureAdaptiveHibernation({
+        adjustmentStepMs: 1_000,
+        maximumIdleMs: 8_000,
+        maximumWakeToSpawnRatio: 1.25,
+        minimumIdleMs: 6_000,
+        minimumResidenceMs: 20_000,
+        observationsPerAdjustment: 3,
+      }),
+    ).toMatchObject({ effectiveIdleMs: 8_000 });
+    expect(
+      await pool.run("tenant", (context) => context.getGlobal("retained")),
+    ).toBe(true);
+    expect(pool.configureAdaptiveHibernation(null)).toBeNull();
+    expect(pool.metrics().adaptiveHibernation).toBeNull();
+    expect(transitions).toContainEqual(
+      expect.objectContaining({ enabled: false, type: "policy-reconfigured" }),
+    );
+  });
+
   test("spawns lazily on first use, runs fn(context), and reuses across calls", async () => {
     pool = createHibernatingIsolatePool({
       hibernateAfterMs: 0, // disable auto-hibernate for this test

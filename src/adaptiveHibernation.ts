@@ -8,6 +8,10 @@ export type AdaptiveHibernationPolicyOptions = {
   observationsPerAdjustment?: number;
 };
 
+export type AdaptiveHibernationPolicyConfiguration = Required<
+  Omit<AdaptiveHibernationPolicyOptions, "initialIdleMs">
+>;
+
 export type AdaptiveHibernationObservation = {
   residenceMs: number;
   spawnMs?: number;
@@ -45,6 +49,9 @@ export type AdaptiveHibernationPolicy = {
   observe: (
     observation: AdaptiveHibernationObservation,
   ) => AdaptiveHibernationDecision;
+  reconfigure: (
+    configuration: AdaptiveHibernationPolicyConfiguration,
+  ) => AdaptiveHibernationMetrics;
 };
 
 const positiveInteger = (value: number, label: string) => {
@@ -65,30 +72,64 @@ export const createAdaptiveHibernationPolicy = (
   options: AdaptiveHibernationPolicyOptions,
 ): AdaptiveHibernationPolicy => {
   const initialIdleMs = positiveInteger(options.initialIdleMs, "initialIdleMs");
-  const minimumIdleMs = positiveInteger(
-    options.minimumIdleMs ?? Math.max(1_000, Math.floor(initialIdleMs / 4)),
-    "minimumIdleMs",
-  );
-  const maximumIdleMs = positiveInteger(
-    options.maximumIdleMs ?? Math.max(initialIdleMs * 8, minimumIdleMs),
-    "maximumIdleMs",
-  );
-  const adjustmentStepMs = positiveInteger(
-    options.adjustmentStepMs ?? Math.max(1_000, Math.floor(initialIdleMs / 2)),
-    "adjustmentStepMs",
-  );
-  const observationsPerAdjustment = positiveInteger(
-    options.observationsPerAdjustment ?? 3,
-    "observationsPerAdjustment",
-  );
-  const minimumResidenceMs = nonNegativeInteger(
-    options.minimumResidenceMs ?? initialIdleMs,
-    "minimumResidenceMs",
-  );
-  const maximumWakeToSpawnRatio = options.maximumWakeToSpawnRatio ?? 1.25;
-  if (!Number.isFinite(maximumWakeToSpawnRatio) || maximumWakeToSpawnRatio <= 0)
-    throw new Error("maximumWakeToSpawnRatio must be positive");
-  if (minimumIdleMs > initialIdleMs || initialIdleMs > maximumIdleMs)
+  const resolveConfiguration = (
+    candidate: AdaptiveHibernationPolicyConfiguration,
+  ) => {
+    const minimumIdleMs = positiveInteger(
+      candidate.minimumIdleMs,
+      "minimumIdleMs",
+    );
+    const maximumIdleMs = positiveInteger(
+      candidate.maximumIdleMs,
+      "maximumIdleMs",
+    );
+    const adjustmentStepMs = positiveInteger(
+      candidate.adjustmentStepMs,
+      "adjustmentStepMs",
+    );
+    const observationsPerAdjustment = positiveInteger(
+      candidate.observationsPerAdjustment,
+      "observationsPerAdjustment",
+    );
+    const minimumResidenceMs = nonNegativeInteger(
+      candidate.minimumResidenceMs,
+      "minimumResidenceMs",
+    );
+    const { maximumWakeToSpawnRatio } = candidate;
+    if (
+      !Number.isFinite(maximumWakeToSpawnRatio) ||
+      maximumWakeToSpawnRatio <= 0
+    )
+      throw new Error("maximumWakeToSpawnRatio must be positive");
+    if (minimumIdleMs > maximumIdleMs)
+      throw new Error("minimumIdleMs cannot exceed maximumIdleMs");
+
+    return {
+      adjustmentStepMs,
+      maximumIdleMs,
+      maximumWakeToSpawnRatio,
+      minimumIdleMs,
+      minimumResidenceMs,
+      observationsPerAdjustment,
+    };
+  };
+  let configuration = resolveConfiguration({
+    adjustmentStepMs:
+      options.adjustmentStepMs ??
+      Math.max(1_000, Math.floor(initialIdleMs / 2)),
+    maximumIdleMs:
+      options.maximumIdleMs ??
+      Math.max(initialIdleMs * 8, options.minimumIdleMs ?? 1_000),
+    maximumWakeToSpawnRatio: options.maximumWakeToSpawnRatio ?? 1.25,
+    minimumIdleMs:
+      options.minimumIdleMs ?? Math.max(1_000, Math.floor(initialIdleMs / 4)),
+    minimumResidenceMs: options.minimumResidenceMs ?? initialIdleMs,
+    observationsPerAdjustment: options.observationsPerAdjustment ?? 3,
+  });
+  if (
+    configuration.minimumIdleMs > initialIdleMs ||
+    initialIdleMs > configuration.maximumIdleMs
+  )
     throw new Error(
       "initialIdleMs must be between minimumIdleMs and maximumIdleMs",
     );
@@ -108,12 +149,13 @@ export const createAdaptiveHibernationPolicy = (
     nonNegativeInteger(observation.wakeMs, "wakeMs");
     if (observation.spawnMs !== undefined)
       nonNegativeInteger(observation.spawnMs, "spawnMs");
-    if (observation.residenceMs < minimumResidenceMs)
+    if (observation.residenceMs < configuration.minimumResidenceMs)
       return { reason: "wake-churn", score: 1 };
     if (
       observation.spawnMs !== undefined &&
       observation.spawnMs > 0 &&
-      observation.wakeMs > observation.spawnMs * maximumWakeToSpawnRatio
+      observation.wakeMs >
+        observation.spawnMs * configuration.maximumWakeToSpawnRatio
     )
       return { reason: "wake-slower-than-spawn", score: 1 };
 
@@ -138,18 +180,18 @@ export const createAdaptiveHibernationPolicy = (
       const previousIdleMs = effectiveIdleMs;
       let action: AdaptiveHibernationDecision["action"] = "hold";
       let reason: AdaptiveHibernationAdjustmentReason = "insufficient-evidence";
-      if (observations >= observationsPerAdjustment) {
+      if (observations >= configuration.observationsPerAdjustment) {
         reason = evidence.reason;
         if (evidenceScore > 0) {
           effectiveIdleMs = Math.min(
-            maximumIdleMs,
-            effectiveIdleMs + adjustmentStepMs,
+            configuration.maximumIdleMs,
+            effectiveIdleMs + configuration.adjustmentStepMs,
           );
           action = effectiveIdleMs > previousIdleMs ? "increase" : "hold";
         } else if (evidenceScore < 0) {
           effectiveIdleMs = Math.max(
-            minimumIdleMs,
-            effectiveIdleMs - adjustmentStepMs,
+            configuration.minimumIdleMs,
+            effectiveIdleMs - configuration.adjustmentStepMs,
           );
           action = effectiveIdleMs < previousIdleMs ? "decrease" : "hold";
         }
@@ -170,6 +212,27 @@ export const createAdaptiveHibernationPolicy = (
         observations,
         previousIdleMs,
         reason,
+      };
+    },
+    reconfigure: (nextConfiguration) => {
+      const validated = resolveConfiguration(nextConfiguration);
+      configuration = validated;
+      effectiveIdleMs = Math.max(
+        validated.minimumIdleMs,
+        Math.min(validated.maximumIdleMs, effectiveIdleMs),
+      );
+      evidenceScore = 0;
+      observations = 0;
+      lastReason = "insufficient-evidence";
+
+      return {
+        adjustments,
+        decreases,
+        effectiveIdleMs,
+        evidenceScore,
+        increases,
+        lastReason,
+        observations,
       };
     },
   };

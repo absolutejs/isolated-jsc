@@ -60,6 +60,7 @@ import {
   createAdaptiveHibernationPolicy,
   type AdaptiveHibernationAdjustmentReason,
   type AdaptiveHibernationMetrics,
+  type AdaptiveHibernationPolicyConfiguration,
   type AdaptiveHibernationPolicyOptions,
 } from "./adaptiveHibernation";
 import { createIsolate } from "./isolate";
@@ -175,6 +176,12 @@ export type HibernationEvent =
       effectiveIdleMs: number;
       previousIdleMs: number;
       reason: AdaptiveHibernationAdjustmentReason;
+    }
+  | {
+      type: "policy-reconfigured";
+      effectiveIdleMs: number;
+      enabled: boolean;
+      previousIdleMs: number;
     };
 
 export type HibernatingPoolStats = {
@@ -244,6 +251,15 @@ export type HibernatingIsolatePool = {
    * settle before hibernating).
    */
   hibernate: (key: string) => Promise<void>;
+  /**
+   * Atomically replace or disable the adaptive idle-window policy without
+   * disposing active contexts or deleting checkpoints. Replacement clears
+   * partial evidence from the previous regime and clamps the effective
+   * window into the new bounds.
+   */
+  configureAdaptiveHibernation: (
+    configuration: AdaptiveHibernationPolicyConfiguration | null,
+  ) => AdaptiveHibernationMetrics | null;
   /** Snapshot of the pool's current state. */
   stats: () => HibernatingPoolStats;
   /**
@@ -311,7 +327,7 @@ export const createHibernatingIsolatePool = (
   const store = options.hibernationStore ?? createInMemoryHibernationStore();
   const checkpointOptions = options.checkpointOptions;
   const onTransition = options.onTransition;
-  const adaptivePolicy =
+  let adaptivePolicy =
     options.adaptiveHibernation && hibernateAfterMs > 0
       ? createAdaptiveHibernationPolicy({
           ...options.adaptiveHibernation,
@@ -667,6 +683,45 @@ export const createHibernatingIsolatePool = (
   };
 
   return {
+    configureAdaptiveHibernation: (configuration) => {
+      if (disposed)
+        throw new Error("hibernating isolate pool has been disposed");
+      const previousIdleMs =
+        adaptivePolicy?.effectiveIdleMs() ?? hibernateAfterMs;
+      if (configuration === null) {
+        adaptivePolicy = undefined;
+        emit({
+          effectiveIdleMs: hibernateAfterMs,
+          enabled: false,
+          previousIdleMs,
+          type: "policy-reconfigured",
+        });
+
+        return null;
+      }
+      if (hibernateAfterMs <= 0)
+        throw new Error(
+          "adaptive hibernation cannot be enabled when hibernateAfterMs is disabled",
+        );
+      let metrics: AdaptiveHibernationMetrics;
+      if (adaptivePolicy) metrics = adaptivePolicy.reconfigure(configuration);
+      else {
+        adaptivePolicy = createAdaptiveHibernationPolicy({
+          ...configuration,
+          initialIdleMs: hibernateAfterMs,
+        });
+        metrics = adaptivePolicy.metrics();
+      }
+      emit({
+        effectiveIdleMs: metrics.effectiveIdleMs,
+        enabled: true,
+        previousIdleMs,
+        type: "policy-reconfigured",
+      });
+
+      return metrics;
+    },
+
     async run<R>(
       key: string,
       fn: (context: Context) => Promise<R>,

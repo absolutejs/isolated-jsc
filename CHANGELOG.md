@@ -2,6 +2,20 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.12.1 — 2026-07-17
+
+### Added
+
+- `AdaptiveHibernationPolicy.reconfigure()` validates a complete replacement
+  configuration before atomically applying it, clamps the effective window,
+  and clears partial evidence from the prior policy regime.
+- `HibernatingIsolatePool.configureAdaptiveHibernation()` enables, replaces,
+  or disables adaptation without replacing active contexts or deleting stored
+  checkpoints. Transition hooks receive a `policy-reconfigured` event.
+
+This is the hot control-plane seam: already-running pools can adopt new
+governed bounds without a workload restart.
+
 ## 0.12.0 — 2026-07-17
 
 ### Added

@@ -125,6 +125,7 @@ export type {
   AdaptiveHibernationMetrics,
   AdaptiveHibernationObservation,
   AdaptiveHibernationPolicy,
+  AdaptiveHibernationPolicyConfiguration,
   AdaptiveHibernationPolicyOptions,
 } from "./adaptiveHibernation";
 export type {

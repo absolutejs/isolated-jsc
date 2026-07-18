@@ -67,4 +67,40 @@ describe("adaptive hibernation policy", () => {
       }),
     ).toThrow("initialIdleMs must be between");
   });
+
+  test("atomically reconfigures bounds and clears mixed-regime evidence", () => {
+    const policy = createAdaptiveHibernationPolicy({
+      initialIdleMs: 10_000,
+      maximumIdleMs: 30_000,
+      minimumIdleMs: 5_000,
+      observationsPerAdjustment: 2,
+    });
+    policy.observe({ residenceMs: 1_000, wakeMs: 1 });
+
+    expect(
+      policy.reconfigure({
+        adjustmentStepMs: 1_000,
+        maximumIdleMs: 8_000,
+        maximumWakeToSpawnRatio: 1.5,
+        minimumIdleMs: 6_000,
+        minimumResidenceMs: 20_000,
+        observationsPerAdjustment: 4,
+      }),
+    ).toMatchObject({
+      effectiveIdleMs: 8_000,
+      evidenceScore: 0,
+      observations: 0,
+    });
+    expect(() =>
+      policy.reconfigure({
+        adjustmentStepMs: 1_000,
+        maximumIdleMs: 5_000,
+        maximumWakeToSpawnRatio: 1.5,
+        minimumIdleMs: 6_000,
+        minimumResidenceMs: 20_000,
+        observationsPerAdjustment: 4,
+      }),
+    ).toThrow("minimumIdleMs cannot exceed maximumIdleMs");
+    expect(policy.effectiveIdleMs()).toBe(8_000);
+  });
 });
