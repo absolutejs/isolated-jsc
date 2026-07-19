@@ -41,20 +41,20 @@ This leaves an entire category of applications stranded on Node:
 
 **When should I require FFI?** Require `backend: "ffi"` for hostile-code production paths on macOS or Linux where JavaScriptCore is available. Use `backend: "auto"` for portable defaults, demos, and CI. Add process/container/uid/network boundaries whenever a sandbox escape would expose meaningful host secrets.
 
-## What ships today (v0.11.2)
+## What ships today (v0.12.2)
 
 `@absolutejs/isolated-jsc` runs on two interchangeable backends behind one API:
 
 - **FFI backend (default when libJSC is reachable)** — talks to `libJavaScriptCore` directly via `bun:ffi`. Cold heap ~300 KB, CPU timeouts use JSC's interrupt-driven watchdog (the isolate keeps running after a TimeoutError), and `(0, eval)('X')` / `new Function('return X')()` are blocked entirely via `JSGlobalContextSetEvalEnabled`. Available on macOS (system framework) + Linux with `libjavascriptcoregtk-4.1-0` or `libjavascriptcoregtk-6.0-1` installed.
 
-- **Worker backend (fallback)** — one Bun `Worker` per isolate. Cold heap ~46 MB, timeout terminates the whole isolate. Always available (no system dependency). Default on Windows and any Linux without libJSC.
+- **Worker backend (fallback)** — one Bun `Worker` per isolate. Its worker-local JSC heap starts around 1 MB on Bun 1.3.x; the full worker process footprint is larger. Timeout terminates the whole isolate. Always available (no system dependency). Default on Windows and any Linux without libJSC.
 
 The two share every public type. Pick explicitly with `createIsolate({ backend: 'ffi' | 'worker' | 'auto' })`, or let `'auto'` (the default) probe for libJSC and fall back to Worker. Both backends:
 
 - **Heap isolation.** Each `Isolate` runs in its own Bun Worker → its own JSC VM → its own GC heap. No memory sharing with the host or with peer isolates.
 - **`isolated-vm`-shaped API.** `Isolate`, `Context`, `Script`, `Reference`, `ExternalCopy`. Port-friendly.
 - **Wall-clock timeouts.** `script.run(context, { timeout: 500 })` — millisecond accuracy, enforced from the host via `Worker.terminate()`. v1 trade-off: timeout terminates the entire isolate (pool at the app layer if you need to recycle).
-- **Memory limits.** Soft cap polled every 50 ms via `bun:jsc.memoryUsage()`. Breach posts a fatal and self-terminates; the host rejects pending ops with `MemoryLimitError`.
+- **Memory limits.** Soft cap polled every 50 ms via the worker-local `bun:jsc.heapSize()`. Host and peer-worker allocation is excluded. Breach posts a fatal and self-terminates; the host rejects pending ops with `MemoryLimitError`.
 - **Hardened sandbox by default (T2.1, new in 0.1).** Host-capability globals — `fetch`, `Bun`, `process`, `Worker`, `WebSocket`, host `postMessage` / `addEventListener`, `navigator`, storage, … — are stripped from the sandbox. User code can't reach them via bare lookup, `globalThis.X`, `this.X`, or direct `eval('X')`. Pure JS built-ins (Math, JSON, Promise, the typed-array suite) and safe Web primitives (URL, TextEncoder, Web Crypto, setTimeout, console) stay reachable. Opt out per-isolate via `harden: false` for trusted code, or expose specific capabilities via `unsafelyExposeGlobals: ['fetch']`.
 - **Host-callable `Reference`s.** Expose host functions to the isolate. Worker backend: calls always round-trip via async message-passing (use `await` on the isolate side). FFI backend (0.3+): sync host fns return their value directly through a per-Reference `JSCallback`. Async (Promise-returning) host fns work too on FFI (0.4+) — the runner alternately yields to Bun's event loop and drains JSC's microtask queue until the promise settles, bounded by `Script.run`'s `timeout`.
 - **`ExternalCopy`** for marking large host-side values for cheap pass-through.
@@ -100,7 +100,7 @@ Rule of thumb: use `backend: "ffi"` for hostile-code production paths, `backend:
 | `new Function('return Bun')()`                                 | **blocks**                                                         | reachable — documented residual         |
 | `Math.PI` / `JSON.stringify` / `Promise` / `crypto.randomUUID` | reachable                                                          | reachable                               |
 | `URL` / `TextEncoder` / `WebSocket`                            | **not present** (JSC API only, no Web APIs)                        | reachable (Bun Worker exposes Web APIs) |
-| Cold heap                                                      | ~300 KB                                                            | ~46 MB                                  |
+| Cold JSC heap                                                  | ~300 KB                                                            | ~1 MB                                   |
 | Timeout behaviour                                              | TerminationException thrown into script; **isolate keeps running** | isolate dies, must respawn              |
 | Memory cap                                                     | watchdog-polled `heapCapacity`; terminates on overage              | polled 50 ms; terminates whole isolate  |
 | Sync host fns via Reference                                    | **supported** (direct return)                                      | always wrapped in `await`               |

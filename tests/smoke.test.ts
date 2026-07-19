@@ -25,9 +25,6 @@ const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
 
 describe("createIsolate", () => {
   test("compiles and runs a trivial expression", async () => {
-    // memoryLimit: 128 to comfortably clear the Bun-worker cold-start
-    // heap (~46 MB on Bun 1.3.x). Memory caps below ~64 MB are now too
-    // tight; documented in IsolateOptions.memoryLimit JSDoc.
     const isolate = await createIsolate({ memoryLimit: 128 });
     expect(isolate.backend).toBe("worker");
     const context = await isolate.createContext();
@@ -126,6 +123,16 @@ describe("createIsolate", () => {
     const bytes = await isolate.heapSizeBytes();
     expect(bytes).toBeGreaterThan(0);
     expect(bytes).toBeLessThan(256 * 1024 * 1024);
+    await isolate.dispose();
+  });
+
+  test("worker heap accounting excludes host and peer runtime allocation", async () => {
+    const isolate = await createIsolate({ memoryLimit: 16 });
+    const context = await isolate.createContext();
+    await Bun.sleep(100);
+    const script = await isolate.compileScript("21 * 2");
+    expect(await script.run(context)).toBe(42);
+    expect(await isolate.heapSizeBytes()).toBeLessThan(16 * 1024 * 1024);
     await isolate.dispose();
   });
 });
@@ -232,9 +239,8 @@ describe("hostile tenant", () => {
   test("memory limit terminates an isolate that allocates a runaway buffer", async () => {
     // Allocate heap-resident JS objects (not Uint8Arrays — those go
     // through bmalloc on JSC and don't count toward the GC heap that
-    // `bun:jsc.memoryUsage().current` reports). 50k × ~10 KB strings ≈
-    // 500 MB of heap, well past the 128 MB cap. We use 128 (not 32) to
-    // clear the worker's ~46 MB cold-start baseline.
+    // `bun:jsc.heapSize()` reports). 50k × ~10 KB strings ≈
+    // 500 MB of heap, well past the 128 MB cap.
     const isolate = await createIsolate({ memoryLimit: 128 });
     const context = await isolate.createContext();
     const script = await isolate.compileScript(`

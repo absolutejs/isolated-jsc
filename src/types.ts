@@ -6,7 +6,7 @@
  * Shape mirrors `isolated-vm` so anyone porting from Node + isolated-vm gets
  * familiar ergonomics. Backends are swappable:
  *   v1 (now): Bun `Worker` per isolate, soft resource limits via
- *             setTimeout + bun:jsc.memoryUsage polling
+ *             setTimeout + bun:jsc.heapSize polling
  *   v2 (later): bun:ffi to a standalone libJSC build with hard limits +
  *               interrupt-driven CPU + microtask budgets
  *
@@ -43,16 +43,11 @@ export type IsolateOptions = {
    * Hard cap on heap memory (MB). When the isolate's heap exceeds this, the
    * isolate is terminated and any in-flight `script.run` rejects with
    * {@link MemoryLimitError}. v1 enforces via polled
-   * `bun:jsc.memoryUsage` (soft + millisecond-grained); v2 will enforce via
+   * `bun:jsc.heapSize` (soft + millisecond-grained); v2 will enforce via
    * libJSC's heap settings (synchronous, on-allocate).
    *
-   * Defaults to 256 MB. The Bun worker's cold-start heap is ~46 MB steady
-   * state on Bun 1.3.x, but under load (parallel workers, busy host) the
-   * watchdog occasionally measures transient spikes near ~140 MB before
-   * JSC's GC settles. Caps below ~256 MB will sometimes fire the limit
-   * during cold-start and the isolate self-terminates before user code
-   * runs. Use small caps only when you've measured your specific
-   * workload's actual heap profile under realistic load.
+   * Defaults to 256 MB. The worker backend samples only its own JSC heap;
+   * host and peer-worker allocation does not count against this limit.
    */
   memoryLimit?: number;
   /**
@@ -185,7 +180,7 @@ export type Isolate = {
 
   /**
    * Snapshot of the isolate's current heap usage in bytes (best-effort —
-   * sampled via `bun:jsc.memoryUsage` in v1). Cheap; safe to call from
+   * sampled via `bun:jsc.heapSize` in v1). Cheap; safe to call from
    * monitoring loops.
    */
   heapSizeBytes: () => Promise<number>;

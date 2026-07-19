@@ -2,6 +2,15 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.12.2 — 2026-07-19
+
+### Fixed
+
+- Worker-backend memory enforcement and heap telemetry now use the worker-local
+  `bun:jsc.heapSize()` counter. The previous process-wide `memoryUsage().current`
+  counter incorrectly charged host and peer-worker allocation to an isolate,
+  causing healthy tenants to be terminated under parallel host load.
+
 ## 0.12.1 — 2026-07-17
 
 ### Added

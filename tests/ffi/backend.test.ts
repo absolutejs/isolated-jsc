@@ -154,9 +154,9 @@ describeIfFfi("FFI backend — strictly-better-than-Worker properties", () => {
     const context = await isolate.createContext();
     const script = await isolate.compileScript("1 + 1");
     expect(await script.run(context)).toBe(2);
-    // Worker cold heap is ~46 MB; FFI is ~300 KB. Quick discriminator:
+    // Worker-local JSC heap is larger than the direct FFI context.
     const bytes = await isolate.heapSizeBytes();
-    expect(bytes).toBeGreaterThan(10 * 1024 * 1024);
+    expect(bytes).toBeGreaterThan(512 * 1024);
   });
 });
 

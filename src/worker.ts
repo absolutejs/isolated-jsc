@@ -2,7 +2,7 @@
  * Worker-side entry point. Spawned by the host as a Bun `Worker`; from here on
  * we live in our own JSC VM with our own heap. We never `import` anything that
  * touches the host's filesystem / network beyond `bun:jsc` (debug primitives:
- * `memoryUsage`).
+ * `heapSize`).
  *
  * Hardening (T2.1): user-script `globalThis` is *not* the worker's `globalThis`.
  * We delete deletable host-capability globals (fetch, process, Worker, etc.)
@@ -20,7 +20,7 @@
  * (async functions, class generators, etc.). That's v3 (FFI) territory.
  */
 
-import { memoryUsage } from "bun:jsc";
+import { heapSize } from "bun:jsc";
 import type {
   HostMessage,
   WireError,
@@ -436,12 +436,12 @@ const installConsoleCapture = (): void => {
 const startMemoryWatchdog = (): void => {
   const memoryLimitBytes = memoryLimitMb * 1024 * 1024;
   setIntervalSafe((): void => {
-    const usage = memoryUsage();
-    if (usage.current > memoryLimitBytes) {
+    const observedBytes = heapSize();
+    if (observedBytes > memoryLimitBytes) {
       postMessageToHost({
         type: "fatal",
         kind: "memory",
-        observedBytes: usage.current,
+        observedBytes,
         memoryLimitMb,
       } satisfies WorkerEvent);
       setTimeoutSafe(() => processExit(1), 5);
@@ -634,7 +634,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (wantMetrics) {
             reply.metrics = {
               cpuMs: Date.now() - startedAt,
-              heapBytes: memoryUsage().current,
+              heapBytes: heapSize(),
             };
           }
           return reply;
@@ -656,7 +656,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (wantMetrics) {
             reply.metrics = {
               cpuMs: Date.now() - startedAt,
-              heapBytes: memoryUsage().current,
+              heapBytes: heapSize(),
             };
           }
           return reply;
@@ -682,11 +682,10 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           return { id: request.id, ok: true, result: null };
         }
         case "heap": {
-          const usage = memoryUsage();
           return {
             id: request.id,
             ok: true,
-            result: usage.current,
+            result: heapSize(),
           };
         }
         default: {

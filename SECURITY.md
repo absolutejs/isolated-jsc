@@ -43,17 +43,17 @@ kernel/runtime escape paths.
 when a JavaScriptCore library is reachable and falls back to the Worker backend
 otherwise.
 
-| Concern                                     | FFI backend                                              | Worker backend                                                      |
-| ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------- |
-| Runtime boundary                            | Direct JavaScriptCore context through `bun:ffi`          | One Bun Worker per isolate                                          |
-| Heap isolation                              | Separate JSC heap                                        | Separate Worker/JSC heap                                            |
-| Timeout behavior                            | JSC interrupt; isolate survives and can run again        | Worker is terminated; isolate must be respawned                     |
-| Memory limit                                | Watchdog-polled JSC heap capacity; terminates on overage | Watchdog-polled `bun:jsc.memoryUsage`; terminates Worker on overage |
-| Ambient `Bun`, `process`, `fetch`, `Worker` | Undefined under hardening                                | Undefined on blockable lookup paths under hardening                 |
-| Direct `eval("Bun")`                        | Blocks when hardening is enabled                         | Undefined under hardening                                           |
-| Indirect `(0, eval)("Bun")`                 | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                          |
-| `new Function("return Bun")()`              | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                          |
-| Web APIs                                    | Bare JSC APIs only; many Web APIs absent                 | Bun Worker Web APIs may exist unless hardened/blocked               |
+| Concern                                     | FFI backend                                              | Worker backend                                                                |
+| ------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Runtime boundary                            | Direct JavaScriptCore context through `bun:ffi`          | One Bun Worker per isolate                                                    |
+| Heap isolation                              | Separate JSC heap                                        | Separate Worker/JSC heap                                                      |
+| Timeout behavior                            | JSC interrupt; isolate survives and can run again        | Worker is terminated; isolate must be respawned                               |
+| Memory limit                                | Watchdog-polled JSC heap capacity; terminates on overage | Watchdog-polled worker-local `bun:jsc.heapSize`; terminates Worker on overage |
+| Ambient `Bun`, `process`, `fetch`, `Worker` | Undefined under hardening                                | Undefined on blockable lookup paths under hardening                           |
+| Direct `eval("Bun")`                        | Blocks when hardening is enabled                         | Undefined under hardening                                                     |
+| Indirect `(0, eval)("Bun")`                 | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
+| `new Function("return Bun")()`              | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
+| Web APIs                                    | Bare JSC APIs only; many Web APIs absent                 | Bun Worker Web APIs may exist unless hardened/blocked                         |
 
 For hostile-code work where the residuals matter, require the FFI backend:
 
@@ -160,8 +160,8 @@ const isolate = await createIsolate({ memoryLimit: 256 });
 Notes:
 
 - The default memory limit is 256 MB.
-- Very low limits can fail during Worker cold start because the Worker backend
-  has a larger baseline heap.
+- Size limits against the tenant workload's worker-local JSC heap; the Worker
+  process and host runtime have separate resource budgets.
 - Memory enforcement is watchdog-polled, not a formal proof that allocation can
   never exceed the limit between samples.
 - Timeout enforcement is wall-clock based.
