@@ -2,6 +2,10 @@
 
 All notable changes to `@absolutejs/isolated-jsc` are documented here.
 
+## 0.12.5 — 2026-08-07
+
+- Accepts the shared `@absolutejs/telemetry` 0.3 runtime line.
+
 ## 0.12.2 — 2026-07-19
 
 ### Fixed
