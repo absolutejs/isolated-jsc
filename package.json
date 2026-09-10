@@ -46,13 +46,13 @@
     "bench:proof": "bun bench/proof.ts",
     "example:agent-tool": "bun run build && bun examples/agent-tool.ts",
     "example:checkpoint": "bun run build && bun examples/checkpoint.ts",
-    "prepublishOnly": "absolute-changelog check"
+    "prepublishOnly": "bun run check:package"
   },
   "dependencies": {
     "@absolutejs/telemetry": "^0.2.0"
   },
   "devDependencies": {
-    "@absolutejs/changelog": "^0.5.1",
+    "@absolutejs/changelog": "^0.6.0",
     "@types/bun": "1.3.14",
     "prettier": "3.5.3",
     "typescript": "5.8.3"
