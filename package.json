@@ -39,7 +39,7 @@
     "test": "ISOLATED_JSC_BACKEND=worker bun test tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"./**/*.{ts,json,md}\"",
-    "check:package": "bun run typecheck && bun run build && bun run test && bun run example:agent-tool",
+    "check:package": "bun run typecheck && bun run build && bun run test && bun run example:agent-tool && absolute-changelog check",
     "check:examples": "cd ../examples/isolated-jsc && bun run typecheck && PORT=3564 bun run test",
     "check:release": "bun run check:package && bun run check:examples",
     "release": "bun run format && bun run check:release && bun publish",
@@ -51,6 +51,7 @@
     "@absolutejs/telemetry": "^0.2.0"
   },
   "devDependencies": {
+    "@absolutejs/changelog": "^0.1.2",
     "@types/bun": "1.3.14",
     "prettier": "3.5.3",
     "typescript": "5.8.3"
@@ -63,15 +64,16 @@
     }
   },
   "files": [
-    "dist",
-    "README.md",
-    "CHANGELOG.md",
-    "BUN_POSITIONING.md",
     "BENCHMARKS.md",
+    "BUN_POSITIONING.md",
+    "CHANGELOG.md",
     "MARKET_ANALYSIS.md",
     "MIGRATING_FROM_ISOLATED_VM.md",
-    "SNAPSHOT_RESEARCH.md",
+    "README.md",
     "SECURITY.md",
+    "SNAPSHOT_RESEARCH.md",
+    "changelog.json",
+    "dist",
     "examples"
   ]
 }
