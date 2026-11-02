@@ -1,6 +1,6 @@
 # Security Model
 
-Date: 2026-05-27
+Date: 2026-11-02
 
 `@absolutejs/isolated-jsc` is a Bun-native isolation layer for running
 untrusted or semi-trusted JavaScript with bounded heap, execution timeouts, and
@@ -29,13 +29,13 @@ kernel/runtime escape paths.
 
 ## Threat Model
 
-| Workload                                          | Recommended boundary                                                           | Why                                                                                              |
-| ------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| Trusted internal plugin                           | `isolated-jsc` with `harden: true`, timeout, memory limit                      | Reduces accidental authority and runaway-code risk.                                              |
-| Semi-trusted tenant script                        | One isolate or pool key per tenant, explicit `Reference` capabilities, metrics | Keeps tenant state separated and host access brokered.                                           |
-| AI-generated snippet                              | Fresh or pooled isolate, short timeout, low capability surface, audit logs     | Controls resource use and makes host tool calls explicit.                                        |
-| Arbitrary hostile code with host secrets nearby   | `isolated-jsc` plus process/container/uid/network boundary                     | In-process isolation alone is not the right final boundary for high-value adversarial workloads. |
-| Code that needs filesystem/network/process access | Brokered host tool API, not ambient globals                                    | Every capability should be intentionally scoped and logged.                                      |
+| Workload                                          | Recommended boundary                                                                                                           | Why                                                                                                                                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Trusted internal plugin                           | `isolated-jsc` with `harden: true`, timeout, memory limit                                                                      | Reduces accidental authority and runaway-code risk.                                                                                                                |
+| Semi-trusted tenant script                        | One isolate or pool key per tenant, explicit `Reference` capabilities, metrics; on the Worker backend, also a process boundary | Keeps tenant state separated and host access brokered. The Worker backend's `import()` and `Bun` residuals mean it does not contain a script that tries to escape. |
+| AI-generated snippet                              | Fresh or pooled isolate, short timeout, low capability surface, audit logs                                                     | Controls resource use and makes host tool calls explicit.                                                                                                          |
+| Arbitrary hostile code with host secrets nearby   | `isolated-jsc` plus process/container/uid/network boundary                                                                     | In-process isolation alone is not the right final boundary for high-value adversarial workloads.                                                                   |
+| Code that needs filesystem/network/process access | Brokered host tool API, not ambient globals                                                                                    | Every capability should be intentionally scoped and logged.                                                                                                        |
 
 ## Backend Guarantees
 
@@ -43,17 +43,39 @@ kernel/runtime escape paths.
 when a JavaScriptCore library is reachable and falls back to the Worker backend
 otherwise.
 
-| Concern                                     | FFI backend                                              | Worker backend                                                                |
-| ------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Runtime boundary                            | Direct JavaScriptCore context through `bun:ffi`          | One Bun Worker per isolate                                                    |
-| Heap isolation                              | Separate JSC heap                                        | Separate Worker/JSC heap                                                      |
-| Timeout behavior                            | JSC interrupt; isolate survives and can run again        | Worker is terminated; isolate must be respawned                               |
-| Memory limit                                | Watchdog-polled JSC heap capacity; terminates on overage | Watchdog-polled worker-local `bun:jsc.heapSize`; terminates Worker on overage |
-| Ambient `Bun`, `process`, `fetch`, `Worker` | Undefined under hardening                                | Undefined on blockable lookup paths under hardening                           |
-| Direct `eval("Bun")`                        | Blocks when hardening is enabled                         | Undefined under hardening                                                     |
-| Indirect `(0, eval)("Bun")`                 | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
-| `new Function("return Bun")()`              | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
-| Web APIs                                    | Bare JSC APIs only; many Web APIs absent                 | Bun Worker Web APIs may exist unless hardened/blocked                         |
+| Concern                                             | FFI backend                                              | Worker backend                                                                |
+| --------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Runtime boundary                                    | Direct JavaScriptCore context through `bun:ffi`          | One Bun Worker per isolate                                                    |
+| Heap isolation                                      | Separate JSC heap                                        | Separate Worker/JSC heap                                                      |
+| Timeout behavior                                    | JSC interrupt; isolate survives and can run again        | Worker is terminated; isolate must be respawned                               |
+| Memory limit                                        | Watchdog-polled JSC heap capacity; terminates on overage | Watchdog-polled worker-local `bun:jsc.heapSize`; terminates Worker on overage |
+| Ambient `Bun`, `process`, `fetch`, `Worker`         | Undefined under hardening                                | Undefined on blockable lookup paths under hardening                           |
+| Direct `eval("Bun")`                                | Blocks when hardening is enabled                         | Undefined under hardening                                                     |
+| Indirect `(0, eval)("Bun")`                         | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
+| `new Function("return Bun")()`                      | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
+| `import("node:child_process")`, `import("bun:ffi")` | No module loader in the bare JSC context                 | **Reachable, even without eval**: loads any built-in or file module           |
+| Web APIs                                            | Bare JSC APIs only; many Web APIs absent                 | Bun Worker Web APIs may exist unless hardened/blocked                         |
+
+### The Worker backend is not a boundary for hostile code
+
+Hardening removes host globals from the paths it can reach, but two things
+stay reachable from code running on the Worker backend, on every Bun release
+up to and including 1.4.4:
+
+- **The `Bun` global**, through indirect eval or the `Function` constructor.
+  Bun defines it as non-configurable and read-only on every Worker global, so
+  it cannot be deleted or redefined from JavaScript, and a `ShadowRealm`
+  receives its own copy.
+- **Dynamic `import()`**, with no eval needed: `await import("node:child_process")`,
+  `import("node:fs")` and `import("bun:ffi")` resolve inside a hardened
+  isolate, giving the code process spawning, filesystem access and native
+  library loading with the Worker's own permissions.
+
+Neither can be closed from inside the package; both need a runtime change.
+Until that ships, treat a Worker-backend isolate as having the full authority
+of the process it runs in: use it for trusted or semi-trusted code, or put a
+process, container or microVM boundary around it that holds no secrets, no
+filesystem worth reading and no network access you have not chosen to give.
 
 For hostile-code work where the residuals matter, require the FFI backend:
 
