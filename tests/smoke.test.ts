@@ -258,7 +258,10 @@ describe("hostile tenant", () => {
   test("lockdown() leaves the sandbox's host references and limits working", async () => {
     const isolate = await createIsolate({ memoryLimit: 64 });
     const context = await isolate.createContext();
-    await context.setGlobal("double", new Reference((n: unknown) => Number(n) * 2));
+    await context.setGlobal(
+      "double",
+      new Reference((n: unknown) => Number(n) * 2),
+    );
     const script = await isolate.compileScript(`(async () => ({
       viaHost: await double(21),
       response: await new Response('ok').text(),
