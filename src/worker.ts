@@ -14,13 +14,14 @@
  * `globalThis` is the sandbox itself, so `globalThis.fetch`, `this.fetch`,
  * and bare `fetch` all resolve to `undefined`.
  *
- * Documented residual: `(0, eval)('Bun')` and `new Function('return Bun')()`
- * still escape because indirect eval / Function-constructor runs in the real
- * global scope and we can't take away `Function` without breaking everything
- * (async functions, class generators, etc.). That's v3 (FFI) territory.
+ * Residuals on stock Bun: `(0, eval)('Bun')` and `new Function('return Bun')()`
+ * reach the real global, where `Bun` is non-configurable, and `import()` loads
+ * any module. When the runtime provides `lockdown()` in `bun:jsc` (AbsoluteJS
+ * patched Bun 1.4.4+absolute.2+), handleInit calls it after hardening, which
+ * removes `Bun` and makes `import()` reject. See SECURITY.md.
  */
 
-import { heapSize } from "bun:jsc";
+import * as jsc from "bun:jsc";
 import type {
   HostMessage,
   WireError,
@@ -436,7 +437,7 @@ const installConsoleCapture = (): void => {
 const startMemoryWatchdog = (): void => {
   const memoryLimitBytes = memoryLimitMb * 1024 * 1024;
   setIntervalSafe((): void => {
-    const observedBytes = heapSize();
+    const observedBytes = jsc.heapSize();
     if (observedBytes > memoryLimitBytes) {
       postMessageToHost({
         type: "fatal",
@@ -471,12 +472,26 @@ const handleInit = (message: WorkerInitMessage): void => {
   const unsafelyExposeGlobals = message.unsafelyExposeGlobals ?? [];
   sandboxPrototype = buildSandboxPrototype(harden, unsafelyExposeGlobals);
   globalThisShadow = buildGlobalThisShadow(harden, unsafelyExposeGlobals);
+  let lockedDown = false;
   if (harden) {
     hardenGlobals(unsafelyExposeGlobals);
+    // Patched Bun's lockdown() removes the non-configurable `Bun` global and
+    // makes import() reject, the two residuals hardening cannot close. It runs
+    // after everything this worker needs is loaded and captured, and before
+    // any sandboxed code. Stock Bun has no lockdown(); the host decides
+    // whether that is acceptable (requireLockdown).
+    const { lockdown } = jsc as { lockdown?: () => void };
+    if (
+      typeof lockdown === "function" &&
+      !unsafelyExposeGlobals.includes("Bun")
+    ) {
+      lockdown();
+      lockedDown = true;
+    }
   }
   startMemoryWatchdog();
   initialized = true;
-  postMessageToHost({ type: "ready" } satisfies WorkerEvent);
+  postMessageToHost({ type: "ready", lockedDown } satisfies WorkerEvent);
 };
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
@@ -634,7 +649,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (wantMetrics) {
             reply.metrics = {
               cpuMs: Date.now() - startedAt,
-              heapBytes: heapSize(),
+              heapBytes: jsc.heapSize(),
             };
           }
           return reply;
@@ -656,7 +671,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (wantMetrics) {
             reply.metrics = {
               cpuMs: Date.now() - startedAt,
-              heapBytes: heapSize(),
+              heapBytes: jsc.heapSize(),
             };
           }
           return reply;
@@ -685,7 +700,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           return {
             id: request.id,
             ok: true,
-            result: heapSize(),
+            result: jsc.heapSize(),
           };
         }
         default: {

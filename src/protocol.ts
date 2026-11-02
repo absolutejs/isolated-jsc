@@ -136,7 +136,11 @@ export type WorkerReply =
 
 /** Unsolicited message from the worker to the host. */
 export type WorkerEvent =
-  | { type: "ready" }
+  | {
+      type: "ready";
+      /** `lockdown()` from `bun:jsc` ran: `Bun` is gone and `import()` rejects. */
+      lockedDown: boolean;
+    }
   | { type: "console"; level: "log" | "warn" | "error"; args: unknown[] }
   | {
       /** Isolate-side code invoked an exposed host Reference. */

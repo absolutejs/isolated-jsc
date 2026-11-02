@@ -100,6 +100,21 @@ export type IsolateOptions = {
    */
   unsafelyExposeGlobals?: string[];
   /**
+   * Refuse to create a Worker-backend isolate unless the runtime can lock it
+   * down. With `harden` on, the Worker backend calls `lockdown()` from
+   * `bun:jsc` when the running Bun provides it (AbsoluteJS patched Bun
+   * 1.4.4+absolute.2 and later): it removes the `Bun` global, which
+   * hardening cannot delete, and makes `import()` reject, closing the two
+   * paths by which code in the sandbox reaches host authority (see
+   * SECURITY.md). On a Bun without it, the isolate is created unlocked and
+   * {@link Isolate.lockedDown} reports `false`; set this to `true` to throw
+   * {@link LockdownUnavailableError} instead. Ignored by the FFI backend,
+   * whose bare JavaScriptCore context has neither path. Lockdown is skipped,
+   * and this option throws, when `harden` is `false` or `Bun` is listed in
+   * {@link unsafelyExposeGlobals}.
+   */
+  requireLockdown?: boolean;
+  /**
    * Pick the backend explicitly.
    *
    * - `"auto"` (default): try FFI first (direct libJavaScriptCore via
@@ -140,6 +155,13 @@ export type Isolate = {
   readonly policy?: ResolvedIsolatePolicy;
   /** Backend selected for this isolate after `auto` resolution. */
   readonly backend: IsolateBackend;
+  /**
+   * `true` when code in this isolate cannot reach the `Bun` global or load
+   * modules with `import()`: always on the FFI backend, and on the Worker
+   * backend when hardening is on and the runtime provides `lockdown()`.
+   * See {@link IsolateOptions.requireLockdown}.
+   */
+  readonly lockedDown: boolean;
   /** `true` once {@link dispose} has been called or the isolate self-died. */
   readonly isDisposed: boolean;
 
@@ -687,6 +709,24 @@ export class ResultSizeError extends Error {
     this.name = "ResultSizeError";
     this.maxResultBytes = maxResultBytes;
     this.observedBytes = observedBytes;
+  }
+}
+
+/**
+ * `requireLockdown` was set but the Worker-backend isolate could not be locked
+ * down: the running Bun has no `lockdown()` in `bun:jsc`, or hardening is off,
+ * or `Bun` is in `unsafelyExposeGlobals`.
+ */
+export class LockdownUnavailableError extends Error {
+  readonly reason: "runtime" | "unhardened";
+  constructor(reason: "runtime" | "unhardened") {
+    super(
+      reason === "runtime"
+        ? `This Bun (${Bun.version}) has no lockdown() in bun:jsc, so a Worker-backend isolate cannot be locked down; use AbsoluteJS patched Bun 1.4.4+absolute.2 or later, or the FFI backend`
+        : "requireLockdown needs harden: true and Bun kept out of unsafelyExposeGlobals",
+    );
+    this.name = "LockdownUnavailableError";
+    this.reason = reason;
   }
 }
 

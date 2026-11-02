@@ -19,6 +19,7 @@ import {
   type Isolate,
   type IsolateOptions,
   IsolateDisposedError,
+  LockdownUnavailableError,
   MemoryLimitError,
   Reference,
   ResultSizeError,
@@ -342,9 +343,9 @@ export const createIsolateWorker = async (
   // only auto-refs the parent for delivery when these properties are set;
   // addEventListener listeners can silently miss messages after the first
   // async op completes. (Discovered the hard way; see ISSUES_WILL_CLOSE.md.)
-  let readyResolve: (() => void) | null = null;
+  let readyResolve: ((lockedDown: boolean) => void) | null = null;
   let readyReject: ((error: unknown) => void) | null = null;
-  const ready = new Promise<void>((resolve, reject) => {
+  const ready = new Promise<boolean>((resolve, reject) => {
     readyResolve = resolve;
     readyReject = reject;
   });
@@ -360,7 +361,7 @@ export const createIsolateWorker = async (
       const r = readyResolve;
       readyResolve = null;
       readyReject = null;
-      r();
+      r(message.lockedDown);
       return;
     }
     onWorkerMessage(state, message);
@@ -389,13 +390,22 @@ export const createIsolateWorker = async (
     unsafelyExposeGlobals: effectiveOptions.unsafelyExposeGlobals,
   } satisfies HostMessage);
 
-  await ready;
+  const lockedDown = await ready;
+  if (effectiveOptions.requireLockdown === true && !lockedDown) {
+    state.disposed = true;
+    worker.terminate();
+    const hardened =
+      effectiveOptions.harden !== false &&
+      !(effectiveOptions.unsafelyExposeGlobals ?? []).includes("Bun");
+    throw new LockdownUnavailableError(hardened ? "runtime" : "unhardened");
+  }
 
   const isolate: Isolate = {
     options: state.options,
     defaultRunOptions: state.defaultRunOptions,
     policy: state.policy,
     backend: "worker",
+    lockedDown,
     get isDisposed(): boolean {
       return state.disposed;
     },
