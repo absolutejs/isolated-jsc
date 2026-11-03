@@ -990,7 +990,13 @@ const makeFfiCallable = (
       const { value, cpuMs, heapBytes } = await runRaw(args, options);
       enforceResultSize(value, maxResultBytes);
       return {
-        metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
+        metrics: {
+          backend: "ffi",
+          cpuMs: Math.round(cpuMs * 1000) / 1000,
+          cpuSource: "wall",
+          heapBytes,
+          wallMs: Math.round(cpuMs * 1000) / 1000,
+        },
         result: value,
       };
     },
@@ -1407,7 +1413,13 @@ const makeFfiScript = (
       if (options.release === true) await script.dispose();
       return {
         result: value,
-        metrics: { backend: "ffi", cpuMs: Math.round(cpuMs), heapBytes },
+        metrics: {
+          backend: "ffi",
+          cpuMs: Math.round(cpuMs * 1000) / 1000,
+          cpuSource: "wall",
+          heapBytes,
+          wallMs: Math.round(cpuMs * 1000) / 1000,
+        },
       };
     },
 

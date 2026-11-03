@@ -23,6 +23,7 @@
 
 import * as jsc from "bun:jsc";
 import type {
+  WireMetrics,
   HostMessage,
   WireError,
   WireValue,
@@ -114,6 +115,13 @@ const setTimeoutSafe = setTimeout;
 const clearTimeoutSafe = clearTimeout;
 const setImmediateSafe = setImmediate;
 const processExit = process.exit.bind(process);
+// Saved before sandboxed code can replace `performance.now` on the shared
+// object or reach `process` (hardening deletes it).
+const nowSafe = performance.now.bind(performance);
+const threadCpuUsage =
+  typeof process.threadCpuUsage === "function"
+    ? process.threadCpuUsage.bind(process)
+    : undefined;
 const stderrWrite = process.stderr.write.bind(process.stderr);
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -552,6 +560,36 @@ const handleInit = (message: WorkerInitMessage): void => {
   postMessageToHost({ type: "ready", lockedDown } satisfies WorkerEvent);
 };
 
+// ─── Metrics ────────────────────────────────────────────────────────────────
+
+type MetricsStart = { wall: number; cpu?: NodeJS.CpuUsage };
+
+const startMetrics = (): MetricsStart => ({
+  cpu: threadCpuUsage?.(),
+  wall: nowSafe(),
+});
+
+const roundMs = (ms: number): number => Math.round(ms * 1000) / 1000;
+
+/** CPU time is this isolate's thread time (user + system), so time spent
+ * awaiting a host Reference is not counted. A run that overlaps another run
+ * on the same isolate is charged for both while they overlap. Without
+ * `process.threadCpuUsage` it falls back to wall time and says so. */
+const finishMetrics = (start: MetricsStart): WireMetrics => {
+  const wallMs = roundMs(nowSafe() - start.wall);
+  const heapBytes = jsc.heapSize();
+  if (start.cpu !== undefined && threadCpuUsage !== undefined) {
+    const used = threadCpuUsage(start.cpu);
+    return {
+      cpuMs: roundMs((used.user + used.system) / 1000),
+      cpuSource: "thread",
+      heapBytes,
+      wallMs,
+    };
+  }
+  return { cpuMs: wallMs, cpuSource: "wall", heapBytes, wallMs };
+};
+
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
 const handleMessage = async (event: MessageEvent): Promise<void> => {
@@ -696,7 +734,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (sandbox === undefined)
             throw new Error(`unknown contextId ${request.contextId}`);
           const wantMetrics = request.withMetrics === true;
-          const startedAt = wantMetrics ? Date.now() : 0;
+          const started = wantMetrics ? startMetrics() : undefined;
           const result = await script(sandbox);
           enforceResultSize(result, request.maxResultBytes);
           const reply: WorkerReply = {
@@ -704,12 +742,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
             ok: true,
             result: { kind: "value", value: result },
           };
-          if (wantMetrics) {
-            reply.metrics = {
-              cpuMs: Date.now() - startedAt,
-              heapBytes: jsc.heapSize(),
-            };
-          }
+          if (started !== undefined) reply.metrics = finishMetrics(started);
           return reply;
         }
         case "call": {
@@ -717,7 +750,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
           if (callable === undefined)
             throw new Error(`unknown callableId ${request.callableId}`);
           const wantMetrics = request.withMetrics === true;
-          const startedAt = wantMetrics ? Date.now() : 0;
+          const started = wantMetrics ? startMetrics() : undefined;
           const argValues = request.args.map((a) => rehydrate(a));
           const result = await callable.fn(...argValues);
           enforceResultSize(result, request.maxResultBytes);
@@ -726,12 +759,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
             ok: true,
             result: { kind: "value", value: result },
           };
-          if (wantMetrics) {
-            reply.metrics = {
-              cpuMs: Date.now() - startedAt,
-              heapBytes: jsc.heapSize(),
-            };
-          }
+          if (started !== undefined) reply.metrics = finishMetrics(started);
           return reply;
         }
         case "disposeContext": {

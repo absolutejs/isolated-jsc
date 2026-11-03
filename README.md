@@ -455,8 +455,52 @@ await runner.dispose();
 await isolate.dispose();
 ```
 
+### Fetch handlers
+
+Run a Web-standard app (`export default { fetch(request, env, ctx) }`, the
+shape Workers, `Bun.serve` and Deno use) in an isolate and call it with host
+`Request`s. Worker backend only.
+
+```ts
+import {
+  bundleFetchHandler,
+  createFetchHandler,
+  createIsolate,
+  Reference,
+} from "@absolutejs/isolated-jsc";
+
+const source = await bundleFetchHandler("./app.ts"); // one CommonJS bundle, Web APIs only
+const isolate = await createIsolate({
+  backend: "worker",
+  requireLockdown: true,
+});
+const handler = await createFetchHandler(
+  await isolate.createContext(),
+  source,
+  {
+    env: { region: "nyc1", lookup: new Reference(async (id) => db.user(id)) },
+  },
+);
+
+const response = await handler.fetch(
+  new Request("https://app.example/users/7"),
+);
+const { metrics } = await handler.fetchWithMetrics(request); // cpuMs is thread CPU time
+```
+
+- `env` holds data and `Reference` capabilities (each an async function
+  calling back to the host).
+- `ctx.state` persists on the context between requests;
+  `context.checkpoint({ include: ["state"] })` captures it for hibernation.
+- `ctx.waitUntil(promise)` lets work finish after the response.
+- Bodies are buffered and capped at 1 MiB each way (`maxRequestBytes`,
+  `maxResponseBytes`); `FetchBodyTooLargeError` says which side overflowed.
+- An Elysia 2 app runs through it unchanged:
+  `export default { fetch: (request) => app.handle(request) }`.
+
 ### Errors
 
+- `FetchBodyTooLargeError` — a fetch handler's request or response body exceeded its limit.
 - `TimeoutError` — wall-clock budget elapsed.
 - `MemoryLimitError` — heap exceeded the configured cap.
 - `ResultSizeError` — successful output exceeded `maxResultBytes`.
