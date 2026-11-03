@@ -322,4 +322,25 @@ describe("hostile tenant", () => {
     expect(err).toBeInstanceOf(MemoryLimitError);
     expect(isolate.isDisposed).toBe(true);
   }, 10_000);
+
+  test("memory limit still stops a timer that allocates after the isolate went idle", async () => {
+    // The heap check slows to once a second when idle; a tenant timer must
+    // pull it back to the busy rate rather than allocate for a full second.
+    const isolate = await createIsolate({ memoryLimit: 128 });
+    const context = await isolate.createContext();
+    await Bun.sleep(1500);
+    const script = await isolate.compileScript(`
+			globalThis.buckets = [];
+			setTimeout(function grow() {
+				for (let i = 0; i < 200; i++) buckets.push({ v: 'x'.repeat(10000) });
+				setTimeout(grow, 1);
+			}, 1);
+			0
+		`);
+    await script.run(context, { timeout: 1000 });
+    const started = Date.now();
+    while (!isolate.isDisposed && Date.now() - started < 5000)
+      await Bun.sleep(20);
+    expect(isolate.isDisposed).toBe(true);
+  }, 10_000);
 });
