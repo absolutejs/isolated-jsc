@@ -23,6 +23,7 @@ export {
   createFetchHandler,
   DEFAULT_FETCH_BODY_LIMIT_BYTES,
   FetchBodyTooLargeError,
+  FetchHandlerBundleError,
 } from "./fetchHandler";
 export type {
   BundleFetchHandlerOptions,

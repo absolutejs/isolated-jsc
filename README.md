@@ -495,12 +495,17 @@ const { metrics } = await handler.fetchWithMetrics(request); // cpuMs is thread 
 - `ctx.waitUntil(promise)` lets work finish after the response.
 - Bodies are buffered and capped at 1 MiB each way (`maxRequestBytes`,
   `maxResponseBytes`); `FetchBodyTooLargeError` says which side overflowed.
+- `bundleFetchHandler` refuses what an isolate cannot provide (`node:` and
+  `bun:` imports, Node built-ins with no installed package, native addons)
+  and lists every such import in a `FetchHandlerBundleError`. Bundling can
+  run the app's macros, so run it where you would run the app's own build.
 - An Elysia 2 app runs through it unchanged:
   `export default { fetch: (request) => app.handle(request) }`.
 
 ### Errors
 
 - `FetchBodyTooLargeError` — a fetch handler's request or response body exceeded its limit.
+- `FetchHandlerBundleError` — an app imports Bun or Node APIs or a native addon.
 - `TimeoutError` — wall-clock budget elapsed.
 - `MemoryLimitError` — heap exceeded the configured cap.
 - `ResultSizeError` — successful output exceeded `maxResultBytes`.

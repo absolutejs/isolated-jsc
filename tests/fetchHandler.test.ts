@@ -6,6 +6,7 @@ import {
   createFetchHandler,
   createIsolate,
   FetchBodyTooLargeError,
+  FetchHandlerBundleError,
   Reference,
   type Isolate,
 } from "../src";
@@ -218,6 +219,26 @@ describe("bundleFetchHandler", () => {
     const handler = await start(source, { env: { greeting: "hi" } });
     const response = await handler.fetch(new Request("http://app/hello"));
     expect(await response.json()).toEqual({ base: "file:", greeting: "hi" });
+  });
+
+  test("refuses Bun and Node APIs instead of bundling browser stubs, listing every import", async () => {
+    const error = await rejection(
+      bundleFetchHandler(
+        join(import.meta.dir, "fixtures/fetch-app-host-apis.ts"),
+      ),
+    );
+    expect(error).toBeInstanceOf(FetchHandlerBundleError);
+    const { problems } = error as FetchHandlerBundleError;
+    expect(problems).toHaveLength(3);
+    expect(problems).toContain(
+      "node:fs, imported by fetch-app-host-apis.ts, is a Bun or Node API",
+    );
+    expect(problems).toContain(
+      "path, imported by fetch-app-host-apis.ts, is a Node built-in",
+    );
+    expect(problems).toContain(
+      "bun, imported by fetch-app-host-apis.ts, is a Bun or Node API",
+    );
   });
 
   test("reports why an app does not bundle", async () => {

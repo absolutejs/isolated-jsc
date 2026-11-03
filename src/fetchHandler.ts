@@ -8,6 +8,8 @@
  * `handler.fetch(request, env, ctx)`, and copies the `Response` back.
  * Bodies are buffered and bounded in both directions.
  */
+import { builtinModules } from "node:module";
+import path from "node:path";
 import type { Callable, Context, RunMetrics } from "./types";
 
 /** Request and response bodies are capped at 1 MiB unless set otherwise. */
@@ -232,16 +234,70 @@ export type BundleFetchHandlerOptions = {
 };
 
 /**
+ * The app imports something an isolate cannot provide: a Bun or Node API, or
+ * a native addon. `problems` lists each import and the file that made it.
+ */
+export class FetchHandlerBundleError extends Error {
+  readonly problems: string[];
+  constructor(entrypoint: string, problems: string[]) {
+    super(
+      `${entrypoint} cannot run in an isolate, which provides Web APIs only:\n${problems
+        .map((problem) => `  - ${problem}`)
+        .join("\n")}`,
+    );
+    this.name = "FetchHandlerBundleError";
+    this.problems = problems;
+  }
+}
+
+const REJECTED_NAMESPACE = "isolate-rejected";
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const nodeBuiltins = builtinModules.filter(
+  (name) => !name.startsWith("_") && !name.includes(":"),
+);
+const BUILTIN_SPECIFIER = new RegExp(
+  `^(?:${nodeBuiltins.map(escapeRegExp).join("|")})(?:/.*)?$`,
+);
+
+/** A bare builtin name (`events`, `buffer`) is fine when the app installed
+ * an npm package by that name: that is real code, not Bun's browser stub. */
+const installedPackage = (specifier: string, importer: string) => {
+  const name = specifier.split("/")[0] ?? specifier;
+  try {
+    return path.isAbsolute(
+      Bun.resolveSync(`${name}/package.json`, path.dirname(importer)),
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Bundle a fetch-handler app for {@link createFetchHandler}: one CommonJS
  * file with every dependency inlined, built for Web APIs only. `import.meta`
  * is defined away (`import.meta.url` becomes `file:///app/index.js`), since
  * the bundle runs as a script, not a module.
- * Throws with the build's messages when the app does not bundle.
+ *
+ * Bun's browser target would quietly replace `fs`, `path` and other Node
+ * built-ins with stubs that fail at runtime, so the bundle refuses them up
+ * front: any `node:` or `bun:` import, the `bun` module, a bare Node
+ * built-in with no installed package of that name, and native `.node`
+ * addons. It reports every such import at once
+ * ({@link FetchHandlerBundleError}). Bundling can run the app's macros: do it
+ * where you would run the app's own build, never in a trusted process.
  */
 export const bundleFetchHandler = async (
   entrypoint: string,
   options: BundleFetchHandlerOptions = {},
 ): Promise<string> => {
+  const problems = new Set<string>();
+  const relative = (file: string) =>
+    path.relative(path.dirname(path.resolve(entrypoint)), file) || file;
+  const reject = (problem: string) => {
+    problems.add(problem);
+    return { namespace: REJECTED_NAMESPACE, path: problem };
+  };
   const build = await Bun.build({
     define: {
       "import.meta": "{}",
@@ -250,9 +306,38 @@ export const bundleFetchHandler = async (
     entrypoints: [entrypoint],
     format: "cjs",
     minify: options.minify ?? true,
+    plugins: [
+      {
+        name: "isolate-web-apis-only",
+        setup(builder) {
+          builder.onResolve({ filter: /^(?:node:|bun:|bun$)/ }, (args) =>
+            reject(
+              `${args.path}, imported by ${relative(args.importer)}, is a Bun or Node API`,
+            ),
+          );
+          builder.onResolve({ filter: BUILTIN_SPECIFIER }, (args) =>
+            installedPackage(args.path, args.importer)
+              ? undefined
+              : reject(
+                  `${args.path}, imported by ${relative(args.importer)}, is a Node built-in`,
+                ),
+          );
+          builder.onLoad({ filter: /\.node$/ }, (args) => {
+            problems.add(`${relative(args.path)} is a native addon`);
+            return { contents: "", loader: "js" };
+          });
+          builder.onLoad(
+            { filter: /.*/, namespace: REJECTED_NAMESPACE },
+            () => ({ contents: "", loader: "js" }),
+          );
+        },
+      },
+    ],
     target: "browser",
     throw: false,
   });
+  if (problems.size > 0)
+    throw new FetchHandlerBundleError(entrypoint, [...problems]);
   const [output] = build.outputs;
   if (!build.success || output === undefined) {
     const messages = build.logs.map((log) => String(log.message ?? log));
