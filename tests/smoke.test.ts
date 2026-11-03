@@ -301,6 +301,37 @@ describe("hostile tenant", () => {
     await isolate.dispose();
   });
 
+  test("sandboxed code cannot print to the process's stdout, with or without capture", async () => {
+    const fixture = new URL("./fixtures/console-leak.ts", import.meta.url)
+      .pathname;
+    for (const mode of ["drop", "capture"]) {
+      const child = Bun.spawn([process.execPath, fixture, mode], {
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      await child.exited;
+      expect(stderr).not.toContain("leak");
+      const lines = stdout.trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const captured = JSON.parse(lines[0]!.replace(/^HOST /, "")) as string[];
+      expect(captured).toEqual(
+        mode === "capture"
+          ? [
+              "log:leak-log",
+              "log:leak-info",
+              "log:leak-debug",
+              "warn:leak-warn",
+              "error:leak-error",
+            ]
+          : [],
+      );
+    }
+  }, 20_000);
+
   test("memory limit terminates an isolate that allocates a runaway buffer", async () => {
     // Allocate heap-resident JS objects (not Uint8Arrays — those go
     // through bmalloc on JSC and don't count toward the GC heap that

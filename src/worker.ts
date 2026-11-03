@@ -412,6 +412,61 @@ const compile = (source: string): CompiledScript => {
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
+/**
+ * A hardened isolate's console. Bun's console also carries a raw `write`, a
+ * `Console` constructor and its `_stdout`/`_stderr` streams, any of which
+ * would let sandboxed code print to the host process's stdout. So the global
+ * is replaced, not patched: a frozen object with every console method, where
+ * `log`/`info`/`debug`, `warn` and `error` go to the host's `onConsole` when
+ * it captures and nowhere otherwise, and everything else does nothing.
+ */
+const installSandboxConsole = (capture: boolean): void => {
+  const send =
+    (level: "log" | "warn" | "error") =>
+    (...args: unknown[]): void => {
+      if (!capture) return;
+      try {
+        postMessageToHost({
+          args,
+          level,
+          type: "console",
+        } satisfies WorkerEvent);
+      } catch {
+        postMessageToHost({
+          args: args.map((a) => {
+            try {
+              return JSON.parse(JSON.stringify(a));
+            } catch {
+              return String(a);
+            }
+          }),
+          level,
+          type: "console",
+        } satisfies WorkerEvent);
+      }
+    };
+  const replacement: Record<string, unknown> = Object.create(null);
+  const nothing = (): void => undefined;
+  for (const name of Object.getOwnPropertyNames(console))
+    replacement[name] =
+      typeof (console as unknown as Record<string, unknown>)[name] ===
+      "function"
+        ? nothing
+        : undefined;
+  replacement.log = send("log");
+  replacement.info = send("log");
+  replacement.debug = send("log");
+  replacement.warn = send("warn");
+  replacement.error = send("error");
+  Object.freeze(replacement);
+  Object.defineProperty(globalThis, "console", {
+    configurable: false,
+    enumerable: false,
+    value: replacement,
+    writable: false,
+  });
+};
+
 const installConsoleCapture = (): void => {
   const consoleAny = console as unknown as Record<
     string,
@@ -518,7 +573,11 @@ const startMemoryWatchdog = (): void => {
 
 const handleInit = (message: WorkerInitMessage): void => {
   memoryLimitMb = message.memoryLimitMb;
-  if (message.captureConsole) installConsoleCapture();
+  // Hardened: sandboxed code never reaches the process's stdout, captured or
+  // not. Unhardened (trusted) isolates keep the old behavior, printing as
+  // well as capturing.
+  if (message.harden !== false) installSandboxConsole(message.captureConsole);
+  else if (message.captureConsole) installConsoleCapture();
   if (typeof message.bootstrap === "string" && message.bootstrap.length > 0) {
     try {
       new Function(message.bootstrap)();

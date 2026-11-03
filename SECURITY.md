@@ -167,6 +167,13 @@ block them.
 Safe JavaScript built-ins remain reachable: `Math`, `JSON`, `Date`, `Promise`,
 `Map`, `Set`, typed arrays, and similar language-level primitives.
 
+A hardened Worker-backend isolate also gets its own frozen `console`. Nothing
+sandboxed code logs reaches the host process's stdout: it goes to `onConsole`
+when you capture it (`log`/`info`/`debug` as `log`, plus `warn` and `error`)
+and is dropped otherwise. Before 0.14.2 the isolate shared the Worker's real
+`console`, including Bun's `console.write` and `console._stdout`, so a host
+that parsed its own stdout could be fed lines that looked like its own.
+
 Set `harden: false` only for trusted code:
 
 ```ts
