@@ -397,12 +397,21 @@ export type RunMetrics = {
   /** Backend that executed this run. Useful when `backend: "auto"` is used. */
   backend: IsolateBackend;
   /**
-   * Wall-clock duration (ms) of the script body inside the worker — does
-   * NOT include host-side message-passing overhead. Use for "how
-   * expensive was the user's script?" not "how long did the round trip
-   * take?". Sub-millisecond runs round to 0.
+   * CPU time (ms, microsecond precision) the run used. On the Worker
+   * backend this is the isolate thread's user + system time, so time spent
+   * awaiting a host {@link Reference} or a timer is not counted; runs that
+   * overlap on one isolate are each charged while they overlap. When
+   * `cpuSource` is `"wall"` (the FFI backend, or a runtime without
+   * `process.threadCpuUsage`) it is the wall-clock duration instead.
    */
   cpuMs: number;
+  /** How `cpuMs` was measured: the isolate's thread CPU time, or wall time. */
+  cpuSource: "thread" | "wall";
+  /**
+   * Wall-clock duration (ms) of the run inside the isolate, not including
+   * host-side message passing.
+   */
+  wallMs: number;
   /**
    * Heap size (bytes) measured immediately after the script returned.
    * NOT the run's peak — a true peak would require continuous polling

@@ -19,6 +19,18 @@ export {
 } from "./checkpoint";
 export { createIsolatedRunner, runIsolated, runIsolatedFile } from "./run";
 export {
+  bundleFetchHandler,
+  createFetchHandler,
+  DEFAULT_FETCH_BODY_LIMIT_BYTES,
+  FetchBodyTooLargeError,
+} from "./fetchHandler";
+export type {
+  BundleFetchHandlerOptions,
+  FetchCallOptions,
+  FetchHandler,
+  FetchHandlerOptions,
+} from "./fetchHandler";
+export {
   CapabilityError,
   createCapabilityAuditBuffer,
   createCapabilityBroker,

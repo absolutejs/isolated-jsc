@@ -159,6 +159,24 @@ describe("script.runWithMetrics", () => {
     expect(metrics.cpuMs).toBeLessThan(5000);
   });
 
+  test("cpuMs is thread CPU time: awaiting a host Reference is not counted", async () => {
+    isolate = await createIsolate();
+    const context = await isolate.createContext();
+    await context.setGlobal(
+      "slowHost",
+      new Reference(() => new Promise((resolve) => setTimeout(resolve, 300))),
+    );
+    const script = await isolate.compileScript(
+      "(async () => { await slowHost(); return 1; })()",
+    );
+    const { metrics } = await script.runWithMetrics(context, {
+      timeout: 5000,
+    });
+    expect(metrics.cpuSource).toBe("thread");
+    expect(metrics.wallMs).toBeGreaterThanOrEqual(290);
+    expect(metrics.cpuMs).toBeLessThan(100);
+  });
+
   test("rejection on a failing run still rejects (metrics are not attached on errors)", async () => {
     isolate = await createIsolate();
     const context = await isolate.createContext();

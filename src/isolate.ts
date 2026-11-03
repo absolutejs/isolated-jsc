@@ -35,6 +35,7 @@ import type {
   HostMessage,
   HostRequest,
   WireError,
+  WireMetrics,
   WireValue,
   WorkerEvent,
   WorkerMessage,
@@ -63,7 +64,7 @@ type Pending = {
   /** Optional out-channel — when set, onWorkerMessage stores the reply's
    * metrics here before resolving. Used by `runWithMetrics`; ignored by
    * every other op. */
-  metricsOut?: { current?: { cpuMs: number; heapBytes: number } };
+  metricsOut?: { current?: WireMetrics };
 };
 
 /** Brand: Context → worker-side contextId. Declared up here so the closure in
@@ -150,12 +151,12 @@ const send = <T>(state: IsolateState, request: HostRequest): Promise<T> => {
 const sendWithMetrics = <T>(
   state: IsolateState,
   request: HostRequest,
-): Promise<{ result: T; metrics?: { cpuMs: number; heapBytes: number } }> => {
+): Promise<{ result: T; metrics?: WireMetrics }> => {
   if (state.disposed) {
     return Promise.reject(state.disposedError ?? new IsolateDisposedError());
   }
   return new Promise((resolve, reject) => {
-    const metricsOut: { current?: { cpuMs: number; heapBytes: number } } = {};
+    const metricsOut: { current?: WireMetrics } = {};
     state.pending.set(request.id, {
       resolve: (result) =>
         resolve({ result: result as T, metrics: metricsOut.current }),
@@ -650,7 +651,7 @@ const makeScript = (
       const id = state.nextId++;
       const { result, metrics } = await raceWithTimeout<{
         result: WireValue;
-        metrics?: { cpuMs: number; heapBytes: number };
+        metrics?: WireMetrics;
       }>(
         state,
         sendWithMetrics(state, {
@@ -669,7 +670,12 @@ const makeScript = (
       return {
         result: fromWire(result),
         metrics: {
-          ...(metrics ?? { cpuMs: 0, heapBytes: 0 }),
+          ...(metrics ?? {
+            cpuMs: 0,
+            cpuSource: "wall",
+            heapBytes: 0,
+            wallMs: 0,
+          }),
           backend: "worker",
         },
       };
@@ -745,7 +751,7 @@ const makeCallable = (
       const id = state.nextId++;
       const { result, metrics } = await raceWithTimeout<{
         result: WireValue;
-        metrics?: { cpuMs: number; heapBytes: number };
+        metrics?: WireMetrics;
       }>(
         state,
         sendWithMetrics(state, {
@@ -760,7 +766,12 @@ const makeCallable = (
       );
       return {
         metrics: {
-          ...(metrics ?? { cpuMs: 0, heapBytes: 0 }),
+          ...(metrics ?? {
+            cpuMs: 0,
+            cpuSource: "wall",
+            heapBytes: 0,
+            wallMs: 0,
+          }),
           backend: "worker",
         },
         result: fromWire(result),

@@ -115,9 +115,12 @@ export type HostMessage = WorkerInitMessage | HostRequest;
 
 /** Per-run telemetry returned when `withMetrics` is set on a `run` op. */
 export type WireMetrics = {
-  /** Wall-clock duration (ms) of script(sandbox) — inside the worker, not
-   * including host-side message-passing overhead. */
+  /** CPU time (ms) of the isolate's thread during the run; wall time when
+   * `cpuSource` is `"wall"`. */
   cpuMs: number;
+  cpuSource: "thread" | "wall";
+  /** Wall-clock duration (ms) of the run inside the worker. */
+  wallMs: number;
   /** Heap size (bytes) measured immediately after the script returned.
    * Not the run's peak — a true peak would require continuous polling.
    * Useful for "did this run blow up?" detection. */
