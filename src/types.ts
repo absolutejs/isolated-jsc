@@ -59,7 +59,10 @@ export type IsolateOptions = {
   /**
    * `onConsole` hook — if user code calls `console.log` etc inside the
    * isolate, where do those messages go? Defaults to dropping them silently
-   * (untrusted code shouldn't pollute host logs). Pass a function to capture.
+   * (untrusted code shouldn't pollute host logs). Pass a function to capture:
+   * `log`, `info` and `debug` arrive as `log`, plus `warn` and `error`. In a
+   * hardened isolate no console method reaches the process's stdout either
+   * way.
    */
   onConsole?: (level: "log" | "warn" | "error", args: unknown[]) => void;
   /**
