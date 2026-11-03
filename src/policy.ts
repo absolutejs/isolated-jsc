@@ -14,7 +14,10 @@ export type IsolatePolicyName =
 export type ResolvedIsolatePolicy = {
   name: IsolatePolicyName;
   description: string;
-  isolate: Pick<IsolateOptions, "backend" | "harden" | "memoryLimit">;
+  isolate: Pick<
+    IsolateOptions,
+    "backend" | "harden" | "memoryLimit" | "requireLockdown"
+  >;
   run: Required<Pick<RunOptions, "timeout">>;
   recipe: IsolatePolicyRecipe;
   console: {
@@ -51,6 +54,7 @@ export type ResolveIsolatePolicyOverrides = {
   backend?: IsolateOptions["backend"];
   harden?: IsolateOptions["harden"];
   memoryLimit?: IsolateOptions["memoryLimit"];
+  requireLockdown?: IsolateOptions["requireLockdown"];
   timeout?: RunOptions["timeout"];
   maxResultBytes?: RunOptions["maxResultBytes"];
   auditMaxEvents?: number;
@@ -91,11 +95,16 @@ const policyDefaults = {
     description:
       "Model-generated or user-requested code with tight runtime, heap, and audit expectations.",
     fallback: {
-      allowWorker: false,
+      allowWorker: true,
       productionNote:
-        "Require FFI in production and compose with an OS boundary when generated code can reach valuable host secrets.",
+        "FFI when libJavaScriptCore is reachable, otherwise a Worker only when the runtime can lock it down (patched Bun's lockdown()); compose with an OS boundary when generated code can reach valuable host secrets.",
     },
-    isolate: { backend: "ffi", harden: true, memoryLimit: 128 },
+    isolate: {
+      backend: "auto",
+      harden: true,
+      memoryLimit: 128,
+      requireLockdown: true,
+    },
     name: "ai-tool",
     recipe: {
       audit: { maxEvents: 100 },
@@ -117,7 +126,7 @@ const policyDefaults = {
     fallback: {
       allowWorker: true,
       productionNote:
-        "Prefer FFI for hostile tenants; Worker fallback is acceptable for trusted tenants or when an outer process/container boundary owns blast-radius control.",
+        "Prefer FFI or set requireLockdown for hostile tenants; an unlocked Worker fallback is acceptable only for trusted tenants or when an outer process/container boundary owns blast-radius control.",
     },
     isolate: { backend: "auto", harden: true, memoryLimit: 256 },
     name: "tenant-script",
@@ -139,11 +148,16 @@ const policyDefaults = {
     description:
       "Third-party plugin code where host powers should be explicit and reviewable.",
     fallback: {
-      allowWorker: false,
+      allowWorker: true,
       productionNote:
-        "Require FFI for untrusted plugins; keep package manager, filesystem, network, and process powers behind brokered host tools.",
+        "FFI or a locked-down Worker for untrusted plugins; keep package manager, filesystem, network, and process powers behind brokered host tools.",
     },
-    isolate: { backend: "ffi", harden: true, memoryLimit: 192 },
+    isolate: {
+      backend: "auto",
+      harden: true,
+      memoryLimit: 192,
+      requireLockdown: true,
+    },
     name: "plugin",
     recipe: {
       audit: { maxEvents: 200 },
@@ -218,6 +232,9 @@ export const resolveIsolatePolicy = (
   if (overrides.harden !== undefined) base.isolate.harden = overrides.harden;
   if (overrides.memoryLimit !== undefined) {
     base.isolate.memoryLimit = overrides.memoryLimit;
+  }
+  if (overrides.requireLockdown !== undefined) {
+    base.isolate.requireLockdown = overrides.requireLockdown;
   }
   if (overrides.timeout !== undefined) {
     base.run.timeout = overrides.timeout;
@@ -333,10 +350,12 @@ export const applyIsolatePolicyOptions = (
   setIfDefined(applied, "backend", resolved.isolate.backend);
   setIfDefined(applied, "harden", resolved.isolate.harden);
   setIfDefined(applied, "memoryLimit", resolved.isolate.memoryLimit);
+  setIfDefined(applied, "requireLockdown", resolved.isolate.requireLockdown);
 
   setIfDefined(applied, "backend", explicit.backend);
   setIfDefined(applied, "harden", explicit.harden);
   setIfDefined(applied, "memoryLimit", explicit.memoryLimit);
+  setIfDefined(applied, "requireLockdown", explicit.requireLockdown);
   setIfDefined(applied, "bootstrap", explicit.bootstrap);
   setIfDefined(applied, "maxConsoleBytes", explicit.maxConsoleBytes);
   setIfDefined(applied, "maxConsoleEntries", explicit.maxConsoleEntries);

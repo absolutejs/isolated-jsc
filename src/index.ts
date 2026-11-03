@@ -82,6 +82,7 @@ export {
   CompileError,
   ExternalCopy,
   IsolateDisposedError,
+  LockdownUnavailableError,
   MemoryLimitError,
   Reference,
   ResultSizeError,

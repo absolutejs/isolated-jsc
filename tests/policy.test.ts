@@ -21,14 +21,15 @@ const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
 };
 
 describe("resolveIsolatePolicy", () => {
-  test("ai-tool defaults require FFI and tight resource limits", () => {
+  test("ai-tool defaults require FFI or a locked-down Worker, with tight resource limits", () => {
     const policy = resolveIsolatePolicy("ai-tool");
 
     expect(policy.name).toBe("ai-tool");
     expect(policy.isolate).toEqual({
-      backend: "ffi",
+      backend: "auto",
       harden: true,
       memoryLimit: 128,
+      requireLockdown: true,
     });
     expect(policy.run.timeout).toBe(1000);
     expect(policy.recipe.run).toEqual({
@@ -51,7 +52,7 @@ describe("resolveIsolatePolicy", () => {
       recycleAfter: 1000,
     });
     expect(policy.console.capture).toBe("host");
-    expect(policy.fallback.allowWorker).toBe(false);
+    expect(policy.fallback.allowWorker).toBe(true);
   });
 
   test("tenant-script defaults are portable but hardened", () => {
@@ -65,19 +66,21 @@ describe("resolveIsolatePolicy", () => {
     expect(policy.recipe.audit.maxEvents).toBe(200);
     expect(policy.recipe.broker.defaultMaxOutputBytes).toBe(131072);
     expect(policy.recipe.pool.maxSize).toBe(128);
+    expect(policy.isolate.requireLockdown).toBeUndefined();
     expect(policy.fallback.allowWorker).toBe(true);
   });
 
-  test("plugin defaults require FFI with explicit host powers", () => {
+  test("plugin defaults require FFI or a locked-down Worker, with explicit host powers", () => {
     const policy = resolveIsolatePolicy("plugin");
 
-    expect(policy.isolate.backend).toBe("ffi");
+    expect(policy.isolate.backend).toBe("auto");
+    expect(policy.isolate.requireLockdown).toBe(true);
     expect(policy.isolate.harden).toBe(true);
     expect(policy.isolate.memoryLimit).toBe(192);
     expect(policy.run.timeout).toBe(2000);
     expect(policy.recipe.broker.defaultConcurrency).toBe(4);
     expect(policy.recipe.console.maxBytes).toBe(32768);
-    expect(policy.fallback.allowWorker).toBe(false);
+    expect(policy.fallback.allowWorker).toBe(true);
   });
 
   test("trusted defaults optimize for operational controls over hardening", () => {
@@ -94,7 +97,7 @@ describe("resolveIsolatePolicy", () => {
 
   test("overrides return a copy without mutating future resolutions", () => {
     const custom = resolveIsolatePolicy("ai-tool", {
-      allowWorkerFallback: true,
+      allowWorkerFallback: false,
       auditMaxEvents: 12,
       backend: "auto",
       brokerDefaultConcurrency: 3,
@@ -116,6 +119,7 @@ describe("resolveIsolatePolicy", () => {
       backend: "auto",
       harden: false,
       memoryLimit: 64,
+      requireLockdown: true,
     });
     expect(custom.run.timeout).toBe(250);
     expect(custom.recipe).toEqual({
@@ -130,10 +134,10 @@ describe("resolveIsolatePolicy", () => {
       run: { maxResultBytes: 8192, timeout: 250 },
     });
     expect(custom.console.capture).toBe("drop");
-    expect(custom.fallback.allowWorker).toBe(true);
+    expect(custom.fallback.allowWorker).toBe(false);
 
     const fresh = resolveIsolatePolicy("ai-tool");
-    expect(fresh.isolate.backend).toBe("ffi");
+    expect(fresh.isolate.backend).toBe("auto");
     expect(fresh.isolate.harden).toBe(true);
     expect(fresh.isolate.memoryLimit).toBe(128);
     expect(fresh.run.timeout).toBe(1000);
@@ -146,7 +150,7 @@ describe("resolveIsolatePolicy", () => {
     expect(fresh.recipe.console.maxEntries).toBe(32);
     expect(fresh.recipe.pool.maxSize).toBe(64);
     expect(fresh.console.capture).toBe("host");
-    expect(fresh.fallback.allowWorker).toBe(false);
+    expect(fresh.fallback.allowWorker).toBe(true);
   });
 
   test("helper builders expose recipe options without sharing mutable state", () => {

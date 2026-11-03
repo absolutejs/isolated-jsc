@@ -554,6 +554,8 @@ export const createIsolateFfi = async (
     defaultRunOptions: state.defaultRunOptions,
     policy: state.policy,
     backend: "ffi",
+    // A bare JavaScriptCore context has no `Bun` global and no module loader.
+    lockedDown: true,
     get isDisposed(): boolean {
       return state.disposed;
     },

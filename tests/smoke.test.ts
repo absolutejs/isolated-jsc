@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import * as jsc from "bun:jsc";
 import {
   createIsolate,
   ExternalCopy,
+  LockdownUnavailableError,
   MemoryLimitError,
   Reference,
   TimeoutError,
@@ -14,6 +16,10 @@ import {
  * tracking Bun issues (#5602 + #14670 + #19130) and the cleanup steps once
  * one of them lands.
  */
+/** Patched Bun 1.4.4+absolute.2 and later provide lockdown() in bun:jsc. */
+const runtimeHasLockdown =
+  typeof (jsc as { lockdown?: unknown }).lockdown === "function";
+
 const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
     await promise;
@@ -192,20 +198,79 @@ describe("hostile tenant", () => {
     await isolate.dispose();
   });
 
-  test("documented residual: (0, eval)('Bun') and new Function('return Bun')() still escape", async () => {
-    // Indirect-eval and the Function constructor run in the worker's real
-    // global scope, which still has Bun (non-configurable). This is v3
-    // (FFI rewrite) territory — documented in IsolateOptions.harden.
+  test("indirect eval, the Function constructor and import() reach host authority only without lockdown()", async () => {
+    // On stock Bun these run in the worker's real global, where Bun is
+    // non-configurable, and import() loads any module. Patched Bun's
+    // lockdown() closes both; see SECURITY.md.
     const isolate = await createIsolate();
     const context = await isolate.createContext();
-    const script = await isolate.compileScript(`({
-      indirectEval: typeof (0, eval)('Bun'),
-      functionCtor: typeof (new Function('return Bun'))(),
-    })`);
+    const script = await isolate.compileScript(`(async () => ({
+      indirectEval: (0, eval)('typeof Bun'),
+      functionCtor: (new Function('return typeof Bun'))(),
+      shadowRealm: typeof ShadowRealm,
+      importChildProcess: await import('node:child_process').then(
+        (m) => typeof m.spawnSync,
+        (error) => error.name + ': ' + error.message,
+      ),
+      importFfi: await import('bun:ffi').then(
+        (m) => typeof m.dlopen,
+        (error) => error.name + ': ' + error.message,
+      ),
+    }))()`);
     const result = (await script.run(context)) as Record<string, string>;
-    expect(result.indirectEval).toBe("object");
-    expect(result.functionCtor).toBe("object");
+    if (runtimeHasLockdown) {
+      const rejected =
+        "TypeError: import() is disabled in this realm by lockdown()";
+      expect(isolate.lockedDown).toBe(true);
+      expect(result).toEqual({
+        indirectEval: "undefined",
+        functionCtor: "undefined",
+        shadowRealm: "undefined",
+        importChildProcess: rejected,
+        importFfi: rejected,
+      });
+    } else {
+      expect(isolate.lockedDown).toBe(false);
+      expect(result.indirectEval).toBe("object");
+      expect(result.functionCtor).toBe("object");
+      expect(result.importChildProcess).toBe("function");
+    }
     await isolate.dispose();
+  });
+
+  test("requireLockdown refuses an isolate the runtime cannot lock down", async () => {
+    if (runtimeHasLockdown) {
+      const isolate = await createIsolate({ requireLockdown: true });
+      expect(isolate.lockedDown).toBe(true);
+      await isolate.dispose();
+    } else {
+      const error = await rejection(createIsolate({ requireLockdown: true }));
+      expect(error).toBeInstanceOf(LockdownUnavailableError);
+      expect((error as LockdownUnavailableError).reason).toBe("runtime");
+    }
+    const unhardened = await rejection(
+      createIsolate({ requireLockdown: true, unsafelyExposeGlobals: ["Bun"] }),
+    );
+    expect(unhardened).toBeInstanceOf(LockdownUnavailableError);
+    expect((unhardened as LockdownUnavailableError).reason).toBe("unhardened");
+  });
+
+  test("lockdown() leaves the sandbox's host references and limits working", async () => {
+    const isolate = await createIsolate({ memoryLimit: 64 });
+    const context = await isolate.createContext();
+    await context.setGlobal(
+      "double",
+      new Reference((n: unknown) => Number(n) * 2),
+    );
+    const script = await isolate.compileScript(`(async () => ({
+      viaHost: await double(21),
+      response: await new Response('ok').text(),
+    }))()`);
+    expect(await script.run(context)).toEqual({ viaHost: 42, response: "ok" });
+    const loop = await isolate.compileScript("for (;;) {}");
+    expect(await rejection(loop.run(context, { timeout: 100 }))).toBeInstanceOf(
+      TimeoutError,
+    );
   });
 
   test("harden: false restores v0.0.1 behaviour (fetch / Bun / process reachable)", async () => {
