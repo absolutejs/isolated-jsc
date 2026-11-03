@@ -10,7 +10,12 @@
  */
 import { builtinModules } from "node:module";
 import path from "node:path";
-import type { Callable, Context, RunMetrics } from "./types";
+import {
+  Reference,
+  type Callable,
+  type Context,
+  type RunMetrics,
+} from "./types";
 
 /** Request and response bodies are capped at 1 MiB unless set otherwise. */
 export const DEFAULT_FETCH_BODY_LIMIT_BYTES = 1024 * 1024;
@@ -25,7 +30,10 @@ export type FetchHandlerOptions = {
    * What the app receives as `env`. Each value is copied in as
    * {@link Context.setGlobal} would: structured-cloneable data, an
    * {@link ExternalCopy}, or a {@link Reference} (which becomes an async
-   * function calling back to the host). The object is frozen.
+   * function calling back to the host). A plain object holding at least one
+   * `Reference` becomes a frozen object of those functions (and any data
+   * beside them), so a capability can be `env.database.execute(...)`. The
+   * object and every such inner object are frozen.
    */
   env?: Record<string, unknown>;
   /** Largest request body accepted, in bytes. Default 1 MiB. */
@@ -81,9 +89,28 @@ type WireResponse = {
   body: Uint8Array | null;
 };
 
-const loaderSource = (source: string, envKeys: string[]): string => {
-  const envEntries = envKeys
-    .map((key, index) => `${JSON.stringify(key)}: ${ENV_GLOBAL_PREFIX}${index}`)
+/** One `env` value as the isolate builds it: a global set from the host, or
+ * a frozen object of such globals. */
+type EnvShape =
+  | { global: string; key: string }
+  | { entries: Array<{ global: string; key: string }>; key: string };
+
+const isCapabilityObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null &&
+  typeof value === "object" &&
+  Object.getPrototypeOf(value) === Object.prototype &&
+  Object.values(value).some((entry) => entry instanceof Reference);
+
+const envExpression = (shape: EnvShape) =>
+  "entries" in shape
+    ? `Object.freeze({ ${shape.entries
+        .map((entry) => `${JSON.stringify(entry.key)}: ${entry.global}`)
+        .join(", ")} })`
+    : shape.global;
+
+const loaderSource = (source: string, env: EnvShape[]): string => {
+  const envEntries = env
+    .map((shape) => `${JSON.stringify(shape.key)}: ${envExpression(shape)}`)
     .join(", ");
   return `this.${MODULE_GLOBAL} = (() => {
   if (typeof Request !== "function" || typeof Response !== "function") {
@@ -163,16 +190,27 @@ export const createFetchHandler = async (
     options.maxRequestBytes ?? DEFAULT_FETCH_BODY_LIMIT_BYTES;
   const maxResponseBytes =
     options.maxResponseBytes ?? DEFAULT_FETCH_BODY_LIMIT_BYTES;
-  const env = Object.entries(options.env ?? {});
-  for (const [index, [, value]] of env.entries()) {
-    await context.setGlobal(`${ENV_GLOBAL_PREFIX}${index}`, value);
+  const env: EnvShape[] = [];
+  for (const [index, [key, value]] of Object.entries(
+    options.env ?? {},
+  ).entries()) {
+    const global = `${ENV_GLOBAL_PREFIX}${index}`;
+    if (!isCapabilityObject(value)) {
+      await context.setGlobal(global, value);
+      env.push({ global, key });
+      continue;
+    }
+    const entries: Array<{ global: string; key: string }> = [];
+    for (const [inner, [innerKey, innerValue]] of Object.entries(
+      value,
+    ).entries()) {
+      const innerGlobal = `${global}_${inner}`;
+      await context.setGlobal(innerGlobal, innerValue);
+      entries.push({ global: innerGlobal, key: innerKey });
+    }
+    env.push({ entries, key });
   }
-  const loader = await context.isolate.compileScript(
-    loaderSource(
-      source,
-      env.map(([key]) => key),
-    ),
-  );
+  const loader = await context.isolate.compileScript(loaderSource(source, env));
   await loader.run(context, { timeout: options.timeout });
   await loader.dispose();
   const callable: Callable = await context.compileCallable(handlerSource);

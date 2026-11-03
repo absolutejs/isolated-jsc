@@ -42,6 +42,12 @@ module.exports = {
         return Response.json({ hits: ctx.state.hits });
       }
       if (url.pathname === "/env") return Response.json({ region: env.region, user: await env.lookup(7) });
+      if (url.pathname === "/capability") {
+        const rows = await env.database.execute("select 1", [2]);
+        let reassigned = "kept";
+        try { env.database.execute = () => "hijacked"; } catch { reassigned = "refused"; }
+        return Response.json({ frozen: Object.isFrozen(env.database), kind: env.database.kind, reassigned, rows });
+      }
       if (url.pathname === "/later") {
         ctx.waitUntil(env.record("after"));
         return new Response("sent");
@@ -105,6 +111,29 @@ describe("createFetchHandler", () => {
       region: "nyc1",
       user: { id: 7, name: "user 7" },
     });
+  });
+
+  test("passes an object of Reference capabilities as a frozen env object", async () => {
+    const calls: unknown[] = [];
+    const handler = await start(echoApp, {
+      env: {
+        database: {
+          execute: new Reference((statement: unknown, parameters: unknown) => {
+            calls.push([statement, parameters]);
+            return [{ ok: 1 }];
+          }),
+          kind: "postgres",
+        },
+      },
+    });
+    const response = await handler.fetch(new Request("http://app/capability"));
+    expect(await response.json()).toEqual({
+      frozen: true,
+      kind: "postgres",
+      reassigned: "kept",
+      rows: [{ ok: 1 }],
+    });
+    expect(calls).toEqual([["select 1", [2]]]);
   });
 
   test("keeps ctx.state between requests and in a checkpoint", async () => {
