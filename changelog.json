@@ -5,6 +5,35 @@
 		{
 			"changes": [
 				{
+					"detail": "`createFetchHandler(context, source, options)` loads a Web-standard app (a CommonJS bundle whose default export has `fetch(request, env, ctx)`) into a Worker-backend context and returns a host-side handler: `handler.fetch(request)` copies the request in, rebuilds a `Request` inside the isolate, awaits the app, and returns a host `Response`. `env` takes data and `Reference` capabilities; `ctx.state` persists on the context between requests and is captured by `context.checkpoint({ include: [\"state\"] })`; `ctx.waitUntil` lets work finish after the response. Bodies are buffered and capped at 1 MiB each way by default (`maxRequestBytes`, `maxResponseBytes`), and `FetchBodyTooLargeError` reports which side overflowed. `handler.fetchWithMetrics` adds the request's run metrics. `bundleFetchHandler(entrypoint)` builds that bundle with `Bun.build`, every dependency inlined, Web APIs only, and `import.meta` defined away. An Elysia 2 app runs through it unchanged.",
+					"kind": "added",
+					"summary": "createFetchHandler and bundleFetchHandler: run fetch(request, env, ctx) apps in an isolate",
+					"symbols": [
+						"createFetchHandler",
+						"bundleFetchHandler",
+						"FetchBodyTooLargeError",
+						"DEFAULT_FETCH_BODY_LIMIT_BYTES",
+						"FetchHandler",
+						"FetchHandlerOptions",
+						"FetchCallOptions",
+						"BundleFetchHandlerOptions"
+					]
+				},
+				{
+					"detail": "On the Worker backend, `metrics.cpuMs` was `Date.now()` around the run, so time spent awaiting a host `Reference` or a timer was reported as CPU, rounded to whole milliseconds. It is now the isolate thread's CPU time (user + system, from `process.threadCpuUsage`) at microsecond precision, so a run that waits 300 ms on the host reports under a millisecond of CPU. Two fields are new: `wallMs`, the run's wall-clock duration, and `cpuSource`, `\"thread\"` when `cpuMs` is thread CPU time or `\"wall\"` when it is wall time (the FFI backend, or a runtime without `process.threadCpuUsage`). Runs that overlap on one isolate are each charged while they overlap.",
+					"kind": "changed",
+					"summary": "metrics.cpuMs is the isolate thread's CPU time, not wall time; adds wallMs and cpuSource",
+					"symbols": [
+						"RunMetrics"
+					]
+				}
+			],
+			"date": "2026-11-03",
+			"version": "0.14.0"
+		},
+		{
+			"changes": [
+				{
 					"detail": "Every Worker-backend isolate checked its heap against `memoryLimit` every 50 ms, idle or not, so a process holding hundreds of idle isolates spent much of a core polling (300 idle isolates: 62% of a core on two cores). The check now runs every 50 ms while the isolate is busy and every second after it has been idle for a second. A host message or a sandboxed timer callback marks it busy and pulls the next check forward, so code that starts allocating after an idle spell is still stopped at the busy rate. 300 idle isolates now take 26% of a core; throughput under load is unchanged.",
 					"kind": "fixed",
 					"summary": "Idle Worker isolates no longer poll their heap every 50 ms"
