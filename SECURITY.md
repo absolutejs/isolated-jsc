@@ -51,16 +51,16 @@ otherwise.
 | Memory limit                                        | Watchdog-polled JSC heap capacity; terminates on overage | Watchdog-polled worker-local `bun:jsc.heapSize`; terminates Worker on overage |
 | Ambient `Bun`, `process`, `fetch`, `Worker`         | Undefined under hardening                                | Undefined on blockable lookup paths under hardening                           |
 | Direct `eval("Bun")`                                | Blocks when hardening is enabled                         | Undefined under hardening                                                     |
-| Indirect `(0, eval)("Bun")`                         | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
-| `new Function("return Bun")()`                      | Blocks when hardening is enabled                         | Documented residual: reaches Worker global                                    |
-| `import("node:child_process")`, `import("bun:ffi")` | No module loader in the bare JSC context                 | **Reachable, even without eval**: loads any built-in or file module           |
+| Indirect `(0, eval)("Bun")`                         | Blocks when hardening is enabled                         | Locked down: `Bun` is gone. Stock Bun: reaches the Worker global              |
+| `new Function("return Bun")()`                      | Blocks when hardening is enabled                         | Locked down: `Bun` is gone. Stock Bun: reaches the Worker global              |
+| `import("node:child_process")`, `import("bun:ffi")` | No module loader in the bare JSC context                 | Locked down: rejects. **Stock Bun: loads any module, even without eval**      |
 | Web APIs                                            | Bare JSC APIs only; many Web APIs absent                 | Bun Worker Web APIs may exist unless hardened/blocked                         |
 
 ### The Worker backend is not a boundary for hostile code
 
-Hardening removes host globals from the paths it can reach, but two things
-stay reachable from code running on the Worker backend, on every Bun release
-up to and including 1.4.4:
+Hardening removes host globals from the paths it can reach, but on stock Bun
+(every release up to and including 1.4.4) two things stay reachable from code
+running on the Worker backend:
 
 - **The `Bun` global**, through indirect eval or the `Function` constructor.
   Bun defines it as non-configurable and read-only on every Worker global, so
@@ -71,13 +71,35 @@ up to and including 1.4.4:
   isolate, giving the code process spawning, filesystem access and native
   library loading with the Worker's own permissions.
 
-Neither can be closed from inside the package; both need a runtime change.
-Until that ships, treat a Worker-backend isolate as having the full authority
-of the process it runs in: use it for trusted or semi-trusted code, or put a
-process, container or microVM boundary around it that holds no secrets, no
-filesystem worth reading and no network access you have not chosen to give.
+Neither can be closed from inside the package. Both are closed by a runtime
+change: `lockdown()` in `bun:jsc`, shipped in AbsoluteJS patched Bun
+1.4.4+absolute.2 and later. It removes `Bun` and `ShadowRealm` from the
+Worker and makes every later `import()` reject. With `harden` on, the Worker
+backend calls it after loading what it needs and before running any
+sandboxed code, and `isolate.lockedDown` reports whether it did (it is always
+`true` on the FFI backend, which has neither path).
 
-For hostile-code work where the residuals matter, require the FFI backend:
+To refuse an unlocked Worker isolate instead of running in one, set
+`requireLockdown`. On a Bun without `lockdown()`, creation then throws
+`LockdownUnavailableError`:
+
+```ts
+const isolate = await createIsolate({
+  harden: true,
+  memoryLimit: 256,
+  requireLockdown: true,
+});
+```
+
+The `ai-tool` and `plugin` policies set it. Without lockdown, treat a
+Worker-backend isolate as having the full authority of the process it runs
+in: use it for trusted or semi-trusted code, or put a process, container or
+microVM boundary around it that holds no secrets, no filesystem worth reading
+and no network access you have not chosen to give. Even locked down, a Worker
+isolate shares its process with the host, so a runtime bug can still reach
+it; keep that outer boundary for code that will try to escape.
+
+Or require the FFI backend, which needs libJavaScriptCore installed:
 
 ```ts
 const isolate = await createIsolate({
