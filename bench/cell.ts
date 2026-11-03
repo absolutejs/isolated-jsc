@@ -5,7 +5,12 @@
  * Run on AbsoluteJS patched Bun (1.4.4+absolute.2 or later), which has
  * lockdown(); every isolate here requires it, as tenant isolates will.
  *
- *   bun bench/cell.ts [maxIsolates=200] [rssCeilingMb=6144]
+ *   bun bench/cell.ts [maxIsolates=200] [rssCeilingMb=6144] [appBundle]
+ *
+ * With appBundle, each isolate runs that script instead of the micro handler:
+ * a classic (non-module) bundle that sets `globalThis.__app` to anything with
+ * `handle(request): Promise<Response>`, such as an Elysia app built with
+ * `bun build --format=iife --target=browser`. Requests go to `/r7`.
  *
  * Reports: process RSS at increasing isolate counts and the marginal RSS per
  * isolate; cold create (isolate + context + handler, until it first answers)
@@ -22,11 +27,21 @@ const steps = [0, 1, 5, 10, 25, 50, 100, 200, 400, 800].filter(
 
 // A small fetch-style app: module state on the context, plus a handler
 // compiled once and called per request.
-const appSource = `this.state ??= { hits: 0, routes: Array.from({ length: 50 }, (_, i) => "/r" + i) }; 0;`;
-const handlerSource = `(path) => {
+const microApp = `this.state ??= { hits: 0, routes: Array.from({ length: 50 }, (_, i) => "/r" + i) }; 0;`;
+const microHandler = `(path) => {
   this.state.hits += 1;
   return { status: this.state.routes.includes(path) ? 200 : 404, hits: this.state.hits };
 }`;
+const bundlePath = process.argv[4];
+const appSource = bundlePath
+  ? `${await Bun.file(bundlePath).text()}\n;0;`
+  : microApp;
+const handlerSource = bundlePath
+  ? `async (path) => {
+  const response = await globalThis.__app.handle(new Request("http://app" + path));
+  return response.status + " " + (await response.text());
+}`
+  : microHandler;
 
 type Cell = {
   isolate: Isolate;
@@ -63,7 +78,7 @@ const startApp = async (checkpoint?: Checkpoint): Promise<Cell> => {
   );
   await (
     await isolate.compileScript(appSource)
-  ).run(context, { timeout: 1000 });
+  ).run(context, { timeout: 10000 });
   const handle = await context.compileCallable(handlerSource);
   await handle.call(["/r7"]);
   return { context, handle, isolate };
@@ -77,7 +92,9 @@ if (!isolate0.lockedDown)
   throw new Error("isolates are not locked down; run on patched Bun");
 await isolate0.dispose();
 
-console.log(`Bun ${Bun.version}, ${navigator.hardwareConcurrency} cores`);
+console.log(
+  `Bun ${Bun.version}, ${navigator.hardwareConcurrency} cores, app: ${bundlePath ?? "micro handler"}`,
+);
 const baseline = await settledRss();
 const cells: Cell[] = [];
 const cold: number[] = [];
