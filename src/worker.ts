@@ -111,6 +111,8 @@ const postMessageToHost = self.postMessage.bind(self);
 const addHostListener = self.addEventListener.bind(self);
 const setIntervalSafe = setInterval;
 const setTimeoutSafe = setTimeout;
+const clearTimeoutSafe = clearTimeout;
+const setImmediateSafe = setImmediate;
 const processExit = process.exit.bind(process);
 const stderrWrite = process.stderr.write.bind(process.stderr);
 
@@ -434,9 +436,53 @@ const installConsoleCapture = (): void => {
   }
 };
 
+// The heap check runs every 50 ms while the isolate is busy and every second
+// once it has been idle for a second, so a cell of hundreds of idle isolates
+// does not spend most of a core polling. Sandboxed code runs only from a host
+// message or from a timer it scheduled, and both mark activity, which also
+// pulls an idle check forward. A synchronous loop blocks this thread, and
+// with it any check, regardless of the interval.
+const MEMORY_CHECK_BUSY_MS = 50;
+const MEMORY_CHECK_IDLE_MS = 1000;
+const IDLE_AFTER_MS = 1000;
+let lastActivity = Date.now();
+let idleCheck: ReturnType<typeof setTimeout> | undefined;
+let memoryCheck: (() => void) | undefined;
+
+const markActivity = (): void => {
+  lastActivity = Date.now();
+  if (idleCheck === undefined || memoryCheck === undefined) return;
+  clearTimeoutSafe(idleCheck);
+  idleCheck = undefined;
+  setTimeoutSafe(memoryCheck, MEMORY_CHECK_BUSY_MS);
+};
+
+/** Sandboxed timers resolve to these wrappers through the `with` fallthrough,
+ * so a tenant callback marks the isolate busy before it runs. */
+const trackSandboxTimers = (): void => {
+  const g = globalThis as Record<string, unknown>;
+  const timers: [string, (...args: unknown[]) => unknown][] = [
+    ["setTimeout", setTimeoutSafe as (...args: unknown[]) => unknown],
+    ["setInterval", setIntervalSafe as (...args: unknown[]) => unknown],
+    ["setImmediate", setImmediateSafe as (...args: unknown[]) => unknown],
+  ];
+  for (const [name, schedule] of timers) {
+    g[name] = (callback: unknown, ...rest: unknown[]): unknown =>
+      schedule(
+        typeof callback === "function"
+          ? (...args: unknown[]): unknown => {
+              markActivity();
+              return (callback as (...a: unknown[]) => unknown)(...args);
+            }
+          : callback,
+        ...rest,
+      );
+  }
+};
+
 const startMemoryWatchdog = (): void => {
   const memoryLimitBytes = memoryLimitMb * 1024 * 1024;
-  setIntervalSafe((): void => {
+  const check = (): void => {
     const observedBytes = jsc.heapSize();
     if (observedBytes > memoryLimitBytes) {
       postMessageToHost({
@@ -446,8 +492,20 @@ const startMemoryWatchdog = (): void => {
         memoryLimitMb,
       } satisfies WorkerEvent);
       setTimeoutSafe(() => processExit(1), 5);
+      return;
     }
-  }, 50);
+    if (Date.now() - lastActivity < IDLE_AFTER_MS) {
+      setTimeoutSafe(check, MEMORY_CHECK_BUSY_MS);
+    } else {
+      idleCheck = setTimeoutSafe(() => {
+        idleCheck = undefined;
+        check();
+      }, MEMORY_CHECK_IDLE_MS);
+    }
+  };
+  memoryCheck = check;
+  trackSandboxTimers();
+  setTimeoutSafe(check, MEMORY_CHECK_BUSY_MS);
 };
 
 const handleInit = (message: WorkerInitMessage): void => {
@@ -720,6 +778,7 @@ const handleMessage = async (event: MessageEvent): Promise<void> => {
 };
 
 addHostListener("message", (event: MessageEvent): void => {
+  markActivity();
   handleMessage(event).catch((err) => {
     stderrWrite(
       `[worker] handleMessage rejected: ${(err as Error).message}\n${(err as Error).stack ?? ""}\n`,
